@@ -25,6 +25,11 @@
         /* Estilos base para garantir o preenchimento correto */
         body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; background-color: #000; color: #fff; }
         .canvas-container { touch-action: none; }
+        /* Scrollbar customizada para área do contrato */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #dc2626; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #b91c1c; }
     </style>
 </head>
 <body>
@@ -52,7 +57,7 @@
             const [isDrawing, setIsDrawing] = useState(false);
             const [isPdfGenerating, setIsPdfGenerating] = useState(false);
             const [assinaturaDataUrl, setAssinaturaDataUrl] = useState(null);
-            const [authCode, setAuthCode] = useState(""); // Novo estado para o código de autenticação
+            const [authCode, setAuthCode] = useState("");
 
             // Estados para as funcionalidades de IA (Gemini)
             const [aiSummary, setAiSummary] = useState("");
@@ -67,29 +72,28 @@
             const [aiCaption, setAiCaption] = useState("");
             const [isLoadingCaption, setIsLoadingCaption] = useState(false);
             
-            // Novos Estados para as novas funções IA
             const [aiOutfit, setAiOutfit] = useState("");
             const [isLoadingOutfit, setIsLoadingOutfit] = useState(false);
             const [aiWhats, setAiWhats] = useState("");
             const [isLoadingWhats, setIsLoadingWhats] = useState(false);
 
-            // Novos Estados para Lanches e Curiosidades (IA)
             const [aiSnacks, setAiSnacks] = useState("");
             const [isLoadingSnacks, setIsLoadingSnacks] = useState(false);
             const [aiTrivia, setAiTrivia] = useState("");
             const [isLoadingTrivia, setIsLoadingTrivia] = useState(false);
 
-            // Estado para caixa de mensagens (substituindo o alert nativo)
+            // Estado para caixa de mensagens
             const [toastMessage, setToastMessage] = useState("");
 
-            // --- NOVOS ESTADOS: ÁREA DO ADMINISTRADOR ---
+            // --- ESTADOS: ÁREA DO ADMINISTRADOR ---
             const [viewMode, setViewMode] = useState('app'); // 'app' | 'admin'
             const [isAdminAuth, setIsAdminAuth] = useState(false);
             const [adminInput, setAdminInput] = useState('');
             const [showAdminConfig, setShowAdminConfig] = useState(false);
             const [newPassword, setNewPassword] = useState('');
             const [confirmPassword, setConfirmPassword] = useState('');
-            const [searchTerm, setSearchTerm] = useState(''); // Estado para a barra de pesquisa/validação
+            const [searchTerm, setSearchTerm] = useState('');
+            const [contractToDelete, setContractToDelete] = useState(null); // Estado para o modal de eliminação
             
             // Carregar contratos e senha do LocalStorage
             const [contracts, setContracts] = useState(() => {
@@ -105,7 +109,7 @@
                 setTimeout(() => setToastMessage(""), 4000);
             };
 
-            // Função para chamar a API do Gemini com Exponential Backoff
+            // Função para chamar a API do Gemini
             const callGemini = async (prompt, systemInstruction = "") => {
                 let delay = 1000;
                 for (let i = 0; i < 5; i++) {
@@ -221,6 +225,7 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                 }
             }, [etapa, viewMode]);
 
+            // Handlers de Input (com máscaras)
             const handleInputChange = (e) => {
                 const { name, value } = e.target;
                 setFormData({ ...formData, [name]: value });
@@ -241,6 +246,20 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                 setFormData({ ...formData, telefone: value });
             };
 
+            const handleDateChange = (e) => {
+                let value = e.target.value.replace(/\D/g, '').slice(0, 8);
+                if (value.length >= 5) value = value.replace(/^(\d{2})(\d{2})(\d{1,4}).*/, '$1/$2/$3');
+                else if (value.length >= 3) value = value.replace(/^(\d{2})(\d{1,2}).*/, '$1/$2');
+                setFormData({ ...formData, [e.target.name]: value });
+            };
+
+            const handleTimeChange = (e) => {
+                let value = e.target.value.replace(/\D/g, '').slice(0, 4);
+                if (value.length >= 3) value = value.replace(/^(\d{2})(\d{1,2}).*/, '$1:$2');
+                setFormData({ ...formData, [e.target.name]: value });
+            };
+
+            // Assinatura
             const getCoordinates = (e) => {
                 const canvas = canvasRef.current;
                 if (!canvas) return { x: 0, y: 0 };
@@ -270,133 +289,102 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
 
             const stopDrawing = () => { if (isDrawing) { canvasRef.current.getContext('2d').closePath(); setIsDrawing(false); } };
 
+            // Funções de IA
             const handleSummarizeContract = async () => {
                 setIsLoadingAi(true);
                 const systemPrompt = "Você é um assistente jurídico amigável. Seu objetivo é resumir contratos de excursão em linguagem extremamente simples, destacando apenas o que é essencial para o passageiro.";
                 const userPrompt = `Por favor, resuma os pontos principais deste contrato de excursão para que o passageiro entenda rapidamente suas obrigações e direitos. Foque em: tolerância de atraso, política de cancelamento e o que a empresa não se responsabiliza. Contrato: ${contrato}`;
-                
                 try {
                     const summary = await callGemini(userPrompt, systemPrompt);
                     setAiSummary(summary);
                     setShowAiModal(true);
-                } catch (error) {
-                    showToast("Não foi possível gerar o resumo no momento.");
-                } finally {
-                    setIsLoadingAi(false);
-                }
+                } catch (error) { showToast("Não foi possível gerar o resumo no momento."); } 
+                finally { setIsLoadingAi(false); }
             };
 
             const handleGenerateTips = async () => {
                 setIsLoadingAi(true);
                 const systemPrompt = "Você é um guia de viagens experiente em festivais e eventos musicais.";
                 const userPrompt = `Gere uma lista curta de dicas e itens essenciais que eu devo levar na mochila para o evento "${formData.evento}" que acontecerá em "${formData.dataSaida}". Considere o clima provável e o tipo de evento. Seja direto e use bullet points.`;
-                
                 try {
                     const tips = await callGemini(userPrompt, systemPrompt);
                     setAiTips(tips);
-                } catch (error) {
-                    showToast("Não foi possível gerar as dicas no momento.");
-                } finally {
-                    setIsLoadingAi(false);
-                }
+                } catch (error) { showToast("Não foi possível gerar as dicas."); } 
+                finally { setIsLoadingAi(false); }
             };
 
             const handleGeneratePlaylist = async () => {
                 setIsLoadingPlaylist(true);
                 const systemPrompt = "Você é um DJ animado de excursões da Follow Trip.";
                 const userPrompt = `Gere uma playlist de 'Esquenta' com as 5 melhores músicas para ouvir no autocarro/ônibus a caminho do evento "${formData.evento}". Coloque no formato '1. Artista - Música'. Adicione uma breve frase animada no início para o passageiro.`;
-                
                 try {
                     const result = await callGemini(userPrompt, systemPrompt);
                     setAiPlaylist(result);
-                } catch (error) {
-                    showToast("Não foi possível gerar a playlist.");
-                } finally {
-                    setIsLoadingPlaylist(false);
-                }
+                } catch (error) { showToast("Não foi possível gerar a playlist."); } 
+                finally { setIsLoadingPlaylist(false); }
             };
 
             const handleGenerateCaption = async () => {
                 setIsLoadingCaption(true);
                 const systemPrompt = "Você é um especialista em redes sociais focado em turismo e festivais.";
                 const userPrompt = `Crie 3 opções curtas e criativas de legendas para o Instagram para alguém que acabou de assinar o contrato e garantir a sua viagem para o evento "${formData.evento}" com a agência de excursões Follow Trip. Use emojis e a hashtag #FollowTrip.`;
-                
                 try {
                     const result = await callGemini(userPrompt, systemPrompt);
                     setAiCaption(result);
-                } catch (error) {
-                    showToast("Não foi possível gerar as legendas.");
-                } finally {
-                    setIsLoadingCaption(false);
-                }
+                } catch (error) { showToast("Não foi possível gerar as legendas."); } 
+                finally { setIsLoadingCaption(false); }
             };
 
             const handleGenerateOutfit = async () => {
                 setIsLoadingOutfit(true);
                 const systemPrompt = "Você é um consultor de moda experiente focado em conforto e estilo para festivais e viagens longas de autocarro/ônibus.";
                 const userPrompt = `Sugira 2 opções rápidas de looks (um para clima frio e um para clima quente) para ir ao evento "${formData.evento}" partindo da cidade de "${formData.cidadeEmbarque}". Seja direto, use bullet points e emojis.`;
-                
                 try {
                     const result = await callGemini(userPrompt, systemPrompt);
                     setAiOutfit(result);
-                } catch (error) {
-                    showToast("Não foi possível gerar as sugestões de look.");
-                } finally {
-                    setIsLoadingOutfit(false);
-                }
+                } catch (error) { showToast("Não foi possível gerar as sugestões de look."); } 
+                finally { setIsLoadingOutfit(false); }
             };
 
             const handleGenerateWhats = async () => {
                 setIsLoadingWhats(true);
                 const systemPrompt = "Você é uma pessoa super animada, educada e simpática.";
                 const userPrompt = `Escreva uma mensagem muito curta e amigável (máximo 2 linhas) para eu copiar e enviar no grupo de WhatsApp da excursão da Follow Trip para me apresentar. Meu nome é "${formData.nome}", estou indo para o evento "${formData.evento}" e embarco na cidade de "${formData.cidadeEmbarque}". Use emojis.`;
-                
                 try {
                     const result = await callGemini(userPrompt, systemPrompt);
                     setAiWhats(result);
-                } catch (error) {
-                    showToast("Não foi possível gerar a mensagem.");
-                } finally {
-                    setIsLoadingWhats(false);
-                }
+                } catch (error) { showToast("Não foi possível gerar a mensagem."); } 
+                finally { setIsLoadingWhats(false); }
             };
 
             const handleGenerateSnacks = async () => {
                 setIsLoadingSnacks(true);
                 const systemPrompt = "Você é um especialista em viagens de ônibus e nutrição prática.";
                 const userPrompt = `Sugira 5 lanches práticos, que não estragam rápido e não fazem muita sujeira para levar numa viagem de excursão saindo de "${formData.cidadeEmbarque}" para o evento "${formData.evento}". Use emojis e seja direto.`;
-                
                 try {
                     const result = await callGemini(userPrompt, systemPrompt);
                     setAiSnacks(result);
-                } catch (error) {
-                    showToast("Não foi possível gerar as dicas de lanches.");
-                } finally {
-                    setIsLoadingSnacks(false);
-                }
+                } catch (error) { showToast("Não foi possível gerar as dicas de lanches."); } 
+                finally { setIsLoadingSnacks(false); }
             };
 
             const handleGenerateTrivia = async () => {
                 setIsLoadingTrivia(true);
                 const systemPrompt = "Você é um especialista em cultura pop, música e grandes eventos.";
                 const userPrompt = `Escreva 3 curiosidades curtas e muito interessantes sobre o evento "${formData.evento}". Se o evento for genérico, dê curiosidades divertidas sobre festivais de música. Use emojis e tom de voz animado.`;
-                
                 try {
                     const result = await callGemini(userPrompt, systemPrompt);
                     setAiTrivia(result);
-                } catch (error) {
-                    showToast("Não foi possível gerar as curiosidades.");
-                } finally {
-                    setIsLoadingTrivia(false);
-                }
+                } catch (error) { showToast("Não foi possível gerar as curiosidades."); } 
+                finally { setIsLoadingTrivia(false); }
             };
 
+            // Finalizar, PDF e Navegação
             const finalizarAssinatura = () => {
                 if (!aceiteLgpd) return showToast("É necessário aceitar os termos e a Lei LGPD.");
                 const dataUrl = canvasRef.current.toDataURL('image/png');
                 setAssinaturaDataUrl(dataUrl);
 
-                // --- NOVO: Gerar código de autenticação único antes de salvar ---
                 const generatedCode = 'FLW-' + Math.random().toString(36).substr(2, 9).toUpperCase();
                 setAuthCode(generatedCode);
 
@@ -404,13 +392,12 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                     id: Date.now().toString(),
                     ...formData,
                     signedAt: new Date().toISOString(),
-                    authCode: generatedCode // Código armazenado permanentemente para validação no Admin
+                    authCode: generatedCode 
                 };
                 
                 const updatedContracts = [...contracts, newContract];
                 setContracts(updatedContracts);
                 localStorage.setItem('followtrip_contracts', JSON.stringify(updatedContracts));
-                // ---------------------------------------------
 
                 setEtapa(3);
             };
@@ -443,7 +430,6 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                     `;
                 }
                 
-                // Configuração atualizada para forçar adequação em A4 e evitar a quebra do bloco de assinatura
                 const opts = { 
                     margin: 10, 
                     filename: `Contrato_FollowTrip_${formData.nome.replace(/\s+/g, '_')}.pdf`, 
@@ -464,7 +450,6 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
             };
 
             const avancarParaEtapa2 = () => {
-                // Valida se já existe um contrato com o mesmo CPF para o mesmo Evento
                 const contratoExistente = contracts.find(
                     c => c.cpf === formData.cpf && 
                          c.evento.toLowerCase().trim() === formData.evento.toLowerCase().trim()
@@ -478,7 +463,18 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                 setEtapa(2);
             };
 
-            // Validação: Todos os campos devem estar preenchidos
+            const resetarFormulario = () => {
+                setFormData({
+                    nome: '', cpf: '', rg: '', orgaoEmissor: '', email: '',
+                    telefone: '', cidadeEmbarque: '', evento: '', dataSaida: '',
+                    horarioPrevisto: '', locaisEmbarque: '', dataRetorno: ''
+                });
+                setAceiteLgpd(false);
+                setAssinaturaDataUrl(null);
+                setAuthCode("");
+                setEtapa(1);
+            };
+
             const isFormValid = Object.values(formData).every(val => val.trim() !== '');
 
             // --- LÓGICA DO ADMINISTRADOR ---
@@ -515,7 +511,7 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                 
                 const rows = eventContracts.map(c => [
                     new Date(c.signedAt).toLocaleString('pt-BR'),
-                    `"${c.authCode || 'N/A'}"`, // Inclui o código no CSV
+                    `"${c.authCode || 'N/A'}"`, 
                     `"${c.evento || ''}"`,
                     `"${c.nome || ''}"`,
                     `"${c.cpf || ''}"`,
@@ -530,7 +526,6 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                     `"${c.dataRetorno || ''}"`
                 ]);
 
-                // Adiciona BOM para que o Excel identifique UTF-8 com acentos
                 const csvContent = '\uFEFF' + [
                     headers.join(','),
                     ...rows.map(e => e.join(','))
@@ -545,6 +540,16 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
+            };
+
+            const confirmDeleteContract = () => {
+                if (contractToDelete) {
+                    const updated = contracts.filter(c => c.id !== contractToDelete);
+                    setContracts(updated);
+                    localStorage.setItem('followtrip_contracts', JSON.stringify(updated));
+                    showToast("Contrato eliminado com sucesso.");
+                    setContractToDelete(null);
+                }
             };
 
             // RENDERIZAÇÃO DA TELA DO ADMIN
@@ -566,10 +571,7 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                 <form onSubmit={handleAdminLogin} className="space-y-4">
                                     <div>
                                         <input 
-                                            type="password" 
-                                            required 
-                                            value={adminInput}
-                                            onChange={(e) => setAdminInput(e.target.value)}
+                                            type="password" required value={adminInput} onChange={(e) => setAdminInput(e.target.value)}
                                             placeholder="Senha de Acesso (padrão: admin)" 
                                             className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl outline-none focus:border-red-600 text-white placeholder-slate-500"
                                         />
@@ -578,18 +580,12 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                         Entrar
                                     </button>
                                 </form>
-                                {/* Toast Admin Login */}
-                                {toastMessage && (
-                                    <div className="mt-4 bg-red-500/10 border border-red-500/50 text-red-500 text-sm font-bold text-center px-4 py-2 rounded-lg">
-                                        {toastMessage}
-                                    </div>
-                                )}
                             </div>
                         </div>
                     );
                 }
 
-                // Lógica de Filtro/Pesquisa na Tela do Admin
+                // Lógica de Filtro/Pesquisa
                 const filteredContracts = contracts.filter(contract => {
                     if (!searchTerm) return true;
                     const term = searchTerm.toLowerCase();
@@ -601,7 +597,7 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                     );
                 });
 
-                // Agrupar contratos filtrados por NOME DO EVENTO
+                // Agrupar
                 const groupedContracts = filteredContracts.reduce((acc, contract) => {
                     const event = contract.evento || 'Evento Desconhecido';
                     if (!acc[event]) acc[event] = [];
@@ -631,6 +627,31 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                     </button>
                                 </div>
                             </header>
+
+                            {/* Cards de Estatísticas */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex items-center gap-5 shadow-lg">
+                                    <div className="bg-blue-600/20 p-4 rounded-xl text-blue-500"><i className="fas fa-file-signature text-2xl"></i></div>
+                                    <div>
+                                        <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">Total de Contratos</p>
+                                        <p className="text-3xl font-black text-white leading-none">{filteredContracts.length}</p>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex items-center gap-5 shadow-lg">
+                                    <div className="bg-purple-600/20 p-4 rounded-xl text-purple-500"><i className="fas fa-calendar-alt text-2xl"></i></div>
+                                    <div>
+                                        <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">Eventos Ativos</p>
+                                        <p className="text-3xl font-black text-white leading-none">{Object.keys(groupedContracts).length}</p>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex items-center gap-5 shadow-lg">
+                                    <div className="bg-green-600/20 p-4 rounded-xl text-green-500"><i className="fas fa-check-circle text-2xl"></i></div>
+                                    <div>
+                                        <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">Status do Sistema</p>
+                                        <p className="text-xl font-black text-white leading-none mt-2">Operacional</p>
+                                    </div>
+                                </div>
+                            </div>
 
                             {/* Alterar Senha */}
                             {showAdminConfig && (
@@ -694,12 +715,12 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                                         <th className="px-6 py-4 font-bold">Documentos</th>
                                                         <th className="px-6 py-4 font-bold">Contato</th>
                                                         <th className="px-6 py-4 font-bold">Logística</th>
-                                                        <th className="px-6 py-4 font-bold text-right">Validação (Admin)</th>
+                                                        <th className="px-6 py-4 font-bold text-right">Validação e Ações</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-800">
                                                     {eventContracts.map((contract) => (
-                                                        <tr key={contract.id} className="hover:bg-slate-800/40 transition-colors">
+                                                        <tr key={contract.id} className="hover:bg-slate-800/40 transition-colors group">
                                                             <td className="px-6 py-4 font-medium text-white whitespace-nowrap">
                                                                 <div className="flex items-center gap-3">
                                                                     <div className="bg-slate-700 p-2 rounded-full"><i className="fas fa-user text-slate-300"></i></div>
@@ -719,11 +740,21 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                                                 <div className="mt-0.5">Embarque: <span className="text-slate-300">{contract.cidadeEmbarque}</span></div>
                                                             </td>
                                                             <td className="px-6 py-4 whitespace-nowrap text-right">
-                                                                <div className="text-[10px] text-slate-400 mb-1">CÓDIGO: <strong className="text-white font-mono">{contract.authCode || 'N/D'}</strong></div>
-                                                                <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-green-500/10 text-green-400 border border-green-500/20 text-[10px] font-bold">
-                                                                    <i className="fas fa-check-circle mr-1.5"></i>
-                                                                    {new Date(contract.signedAt).toLocaleString('pt-BR')}
-                                                                </span>
+                                                                <div className="flex flex-col items-end gap-2">
+                                                                    <div className="text-[10px] text-slate-400">CÓDIGO: <strong className="text-white font-mono">{contract.authCode || 'N/D'}</strong></div>
+                                                                    <div className="flex items-center justify-end gap-2">
+                                                                        <span className="inline-flex items-center px-2 py-1 rounded-md bg-green-500/10 text-green-400 border border-green-500/20 text-[10px] font-bold" title={new Date(contract.signedAt).toLocaleString('pt-BR')}>
+                                                                            <i className="fas fa-check-circle mr-1"></i> Verificado
+                                                                        </span>
+                                                                        <button 
+                                                                            onClick={() => setContractToDelete(contract.id)} 
+                                                                            className="text-slate-500 hover:text-red-500 hover:bg-red-500/10 px-2 py-1 rounded transition-all opacity-0 group-hover:opacity-100"
+                                                                            title="Eliminar Contrato"
+                                                                        >
+                                                                            <i className="fas fa-trash-alt"></i>
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
                                                             </td>
                                                         </tr>
                                                     ))}
@@ -734,10 +765,20 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                 ))
                             )}
 
-                            {/* Toast Admin General */}
-                            {toastMessage && (
-                                <div className="fixed bottom-6 right-6 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold flex items-center gap-3">
-                                    <i className="fas fa-info-circle text-xl"></i> {toastMessage}
+                            {/* Modal de Eliminação de Contrato */}
+                            {contractToDelete && (
+                                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+                                    <div className="bg-slate-900 border border-slate-700 p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center relative zoom-in-95">
+                                        <div className="mx-auto bg-red-500/10 w-16 h-16 rounded-full flex items-center justify-center mb-4">
+                                            <i className="fas fa-exclamation-triangle text-3xl text-red-500"></i>
+                                        </div>
+                                        <h3 className="text-xl font-bold text-white mb-2">Eliminar Contrato?</h3>
+                                        <p className="text-slate-400 text-sm mb-6">Esta ação é irreversível. Tem a certeza que pretende remover este contrato permanentemente do sistema?</p>
+                                        <div className="flex gap-3">
+                                            <button onClick={() => setContractToDelete(null)} className="flex-1 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition">Cancelar</button>
+                                            <button onClick={confirmDeleteContract} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition shadow-lg shadow-red-600/20">Eliminar</button>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
 
@@ -749,7 +790,6 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
             // --- RENDERIZAÇÃO DA APLICAÇÃO PRINCIPAL (APP) ---
             return (
                 <div className="min-h-screen bg-black text-white p-4 md:p-8 font-sans relative">
-                    {/* Botão para acesso ao painel de administração */}
                     <button 
                         onClick={() => setViewMode('admin')} 
                         className="absolute top-4 right-4 md:top-8 md:right-8 bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all z-10"
@@ -759,12 +799,11 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
 
                     <div className="max-w-6xl mx-auto space-y-6">
                         
-                        {/* Header Original */}
                         <header className="bg-red-600 rounded-2xl p-6 shadow-xl border border-red-500 flex items-center justify-between mt-12 md:mt-0">
-                            <div className="flex items-center gap-4 cursor-pointer" title="Voltar ao início" onClick={() => setEtapa(1)}>
-                                <div className="bg-black p-3 rounded-lg"><i className="fas fa-pen-nib text-xl text-red-600"></i></div>
+                            <div className="flex items-center gap-4 cursor-pointer group" title="Voltar ao início" onClick={resetarFormulario}>
+                                <div className="bg-black p-3 rounded-lg group-hover:scale-105 transition-transform"><i className="fas fa-pen-nib text-xl text-red-600"></i></div>
                                 <div>
-                                    <h1 className="text-2xl font-bold text-white uppercase tracking-tighter hover:text-red-200 transition-colors">Follow Trip</h1>
+                                    <h1 className="text-2xl font-bold text-white uppercase tracking-tighter group-hover:text-red-200 transition-colors">Follow Trip</h1>
                                     <p className="text-red-100 text-sm">
                                         {etapa === 1 && 'Etapa 1: Dados do Passageiro e Evento'}
                                         {etapa === 2 && 'Etapa 2: Contrato e Assinatura'}
@@ -775,8 +814,8 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                             <div className="hidden sm:flex items-center gap-3 pr-4">
                                 {[1, 2, 3].map(num => (
                                     <React.Fragment key={num}>
-                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold border-2 ${etapa >= num ? 'bg-white text-red-600 border-white' : 'bg-transparent text-white border-red-400'}`}>{num}</div>
-                                        {num < 3 && <div className={`w-8 h-1 rounded ${etapa > num ? 'bg-white' : 'bg-red-400'}`}></div>}
+                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold border-2 transition-colors ${etapa >= num ? 'bg-white text-red-600 border-white' : 'bg-transparent text-white border-red-400'}`}>{num}</div>
+                                        {num < 3 && <div className={`w-8 h-1 rounded transition-colors ${etapa > num ? 'bg-white' : 'bg-red-400'}`}></div>}
                                     </React.Fragment>
                                 ))}
                             </div>
@@ -830,16 +869,16 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                         <div className="grid grid-cols-2 gap-4">
                                             <div>
                                                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Data Saída *</label>
-                                                <input type="text" name="dataSaida" value={formData.dataSaida} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="DD/MM/AAAA" required />
+                                                <input type="text" name="dataSaida" value={formData.dataSaida} onChange={handleDateChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="DD/MM/AAAA" maxLength="10" required />
                                             </div>
                                             <div>
                                                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Horário *</label>
-                                                <input type="text" name="horarioPrevisto" value={formData.horarioPrevisto} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="00:00" required />
+                                                <input type="text" name="horarioPrevisto" value={formData.horarioPrevisto} onChange={handleTimeChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="HH:MM" maxLength="5" required />
                                             </div>
                                         </div>
                                         <div>
                                             <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Data Retorno *</label>
-                                            <input type="text" name="dataRetorno" value={formData.dataRetorno} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="DD/MM/AAAA" required />
+                                            <input type="text" name="dataRetorno" value={formData.dataRetorno} onChange={handleDateChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="DD/MM/AAAA" maxLength="10" required />
                                         </div>
                                         <div className="md:col-span-2">
                                             <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Locais de Embarque *</label>
@@ -850,7 +889,7 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                 </section>
 
                                 <div className="flex justify-end pt-2">
-                                    <button onClick={avancarParaEtapa2} disabled={!isFormValid} className={`flex items-center gap-2 px-8 py-3.5 rounded-xl font-bold text-lg transition-all shadow-lg ${!isFormValid ? 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-50' : 'bg-red-600 text-white hover:bg-red-700 active:scale-95'}`}>PRÓXIMA ETAPA <i className="fas fa-arrow-right"></i></button>
+                                    <button onClick={avancarParaEtapa2} disabled={!isFormValid} className={`flex items-center gap-2 px-8 py-3.5 rounded-xl font-bold text-lg transition-all shadow-lg ${!isFormValid ? 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-50' : 'bg-red-600 text-white hover:bg-red-700 active:scale-95 shadow-red-600/30'}`}>PRÓXIMA ETAPA <i className="fas fa-arrow-right"></i></button>
                                 </div>
                             </div>
                         )}
@@ -896,7 +935,7 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
 
                                 <div className="flex justify-between items-center pt-4">
                                     <button onClick={() => setEtapa(1)} className="flex items-center gap-2 px-6 py-3.5 rounded-xl text-white font-bold hover:bg-white/10 transition-all uppercase"><i className="fas fa-arrow-left"></i> Voltar</button>
-                                    <button onClick={finalizarAssinatura} disabled={!aceiteLgpd} className={`flex items-center gap-2 px-10 py-3.5 rounded-xl text-white font-bold text-lg transition-all shadow-xl uppercase ${!aceiteLgpd ? 'bg-slate-700 cursor-not-allowed opacity-50' : 'bg-red-600 hover:bg-red-700 active:scale-95'}`}>Confirmar e Finalizar</button>
+                                    <button onClick={finalizarAssinatura} disabled={!aceiteLgpd} className={`flex items-center gap-2 px-10 py-3.5 rounded-xl text-white font-bold text-lg transition-all shadow-xl uppercase ${!aceiteLgpd ? 'bg-slate-700 cursor-not-allowed opacity-50' : 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-red-600/30'}`}>Confirmar e Finalizar</button>
                                 </div>
                             </div>
                         )}
@@ -905,7 +944,7 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                             <div className="max-w-4xl mx-auto py-8 animate-in fade-in zoom-in-95 grid grid-cols-1 md:grid-cols-5 gap-6">
                                 
                                 {/* Card Principal de Sucesso */}
-                                <div className="md:col-span-3 bg-white text-black rounded-3xl p-8 shadow-2xl border-t-8 border-red-600 text-center space-y-8 h-fit">
+                                <div className="md:col-span-3 bg-white text-black rounded-3xl p-8 shadow-2xl border-t-8 border-red-600 text-center space-y-8 h-fit flex flex-col justify-between">
                                     <div className="flex justify-center">
                                         <div className="bg-green-100 p-4 rounded-full"><i className="fas fa-check-circle text-5xl text-green-600"></i></div>
                                     </div>
@@ -921,10 +960,14 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                         <p className="text-xs text-slate-400 uppercase font-bold tracking-widest">Compatível com iOS, Android e Windows</p>
                                     </div>
                                     <div className="pt-8 border-t border-slate-100 space-y-4">
-                                        <p className="text-slate-600 font-bold uppercase text-sm tracking-widest">Dúvidas ou Comprovativos?</p>
-                                        <a href="https://wa.me/5547984474202" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-3 w-full py-4 bg-green-500 text-white rounded-2xl font-bold hover:bg-green-600 transition-all shadow-md active:scale-95">
-                                            <i className="fab fa-whatsapp text-2xl"></i> CONTATAR VIA WHATSAPP (47) 98447-4202
-                                        </a>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <a href="https://wa.me/5547984474202" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 w-full py-3 bg-green-500 text-white rounded-xl font-bold hover:bg-green-600 transition-all shadow-md active:scale-95 text-sm uppercase">
+                                                <i className="fab fa-whatsapp text-lg"></i> CONTATAR
+                                            </a>
+                                            <button onClick={resetarFormulario} className="flex items-center justify-center gap-2 w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-all shadow-md active:scale-95 text-sm uppercase">
+                                                <i className="fas fa-plus-circle text-lg"></i> NOVO CONTRATO
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -938,7 +981,6 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                             </h3>
                                         </div>
 
-                                        {/* Tabs de Navegação IA */}
                                         <div className="flex gap-2 border-b border-red-900/50 pb-3 mb-4 overflow-x-auto" style={{scrollbarWidth: 'none'}}>
                                             <button onClick={() => setActiveAiTab('dicas')} className={`px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${activeAiTab === 'dicas' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'bg-red-950/30 text-slate-400 hover:text-white hover:bg-red-900/50'}`}>
                                                 <i className="fas fa-suitcase"></i> Dicas
@@ -963,191 +1005,116 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                             </button>
                                         </div>
 
-                                        {/* Conteúdo: Dicas */}
+                                        {/* Conteúdos das Tabs IA omitidos da narração por repetição lógica, mantidos no código para funcionar */}
                                         {activeAiTab === 'dicas' && (
                                             !aiTips ? (
                                                 <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
-                                                    <div className="bg-red-950/30 p-4 rounded-full">
-                                                        <i className="fas fa-magic text-3xl text-red-600"></i>
-                                                    </div>
-                                                    <p className="text-xs text-slate-400 font-medium px-4">
-                                                        Quer saber o que não pode faltar na sua mochila para o {formData.evento}?
-                                                    </p>
+                                                    <div className="bg-red-950/30 p-4 rounded-full"><i className="fas fa-magic text-3xl text-red-600"></i></div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">Quer saber o que não pode faltar na sua mochila para o {formData.evento}?</p>
                                                     <button onClick={handleGenerateTips} disabled={isLoadingAi} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
-                                                        {isLoadingAi ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-suitcase"></i>}
-                                                        ✨ GERAR DICAS
+                                                        {isLoadingAi ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-suitcase"></i>} ✨ GERAR DICAS
                                                     </button>
                                                 </div>
                                             ) : (
                                                 <div className="flex-grow flex flex-col h-0">
-                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
-                                                        {aiTips}
-                                                    </div>
-                                                    <button onClick={() => setAiTips("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
-                                                        <i className="fas fa-redo"></i> Gerar Novamente
-                                                    </button>
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">{aiTips}</div>
+                                                    <button onClick={() => setAiTips("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg"><i className="fas fa-redo"></i> Gerar Novamente</button>
                                                 </div>
                                             )
                                         )}
-
-                                        {/* Conteúdo: Playlist */}
                                         {activeAiTab === 'playlist' && (
                                             !aiPlaylist ? (
                                                 <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
-                                                    <div className="bg-red-950/30 p-4 rounded-full">
-                                                        <i className="fas fa-headphones text-3xl text-red-600"></i>
-                                                    </div>
-                                                    <p className="text-xs text-slate-400 font-medium px-4">
-                                                        Criar uma playlist de "Esquenta" com a vibe ideal para a viagem até ao {formData.evento}?
-                                                    </p>
+                                                    <div className="bg-red-950/30 p-4 rounded-full"><i className="fas fa-headphones text-3xl text-red-600"></i></div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">Criar uma playlist de "Esquenta" com a vibe ideal para a viagem até ao {formData.evento}?</p>
                                                     <button onClick={handleGeneratePlaylist} disabled={isLoadingPlaylist} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
-                                                        {isLoadingPlaylist ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-music"></i>}
-                                                        ✨ CRIAR PLAYLIST
+                                                        {isLoadingPlaylist ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-music"></i>} ✨ CRIAR PLAYLIST
                                                     </button>
                                                 </div>
                                             ) : (
                                                 <div className="flex-grow flex flex-col h-0">
-                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
-                                                        {aiPlaylist}
-                                                    </div>
-                                                    <button onClick={() => setAiPlaylist("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
-                                                        <i className="fas fa-redo"></i> Gerar Novamente
-                                                    </button>
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">{aiPlaylist}</div>
+                                                    <button onClick={() => setAiPlaylist("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg"><i className="fas fa-redo"></i> Gerar Novamente</button>
                                                 </div>
                                             )
                                         )}
-
-                                        {/* Conteúdo: Legendas */}
                                         {activeAiTab === 'legenda' && (
                                             !aiCaption ? (
                                                 <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
-                                                    <div className="bg-red-950/30 p-4 rounded-full">
-                                                        <i className="fas fa-camera-retro text-3xl text-red-600"></i>
-                                                    </div>
-                                                    <p className="text-xs text-slate-400 font-medium px-4">
-                                                        Vai postar que garantiu a vaga? Deixe a IA criar as melhores legendas para o seu Insta!
-                                                    </p>
+                                                    <div className="bg-red-950/30 p-4 rounded-full"><i className="fas fa-camera-retro text-3xl text-red-600"></i></div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">Vai postar que garantiu a vaga? Deixe a IA criar as melhores legendas para o seu Insta!</p>
                                                     <button onClick={handleGenerateCaption} disabled={isLoadingCaption} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
-                                                        {isLoadingCaption ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-hashtag"></i>}
-                                                        ✨ CRIAR LEGENDAS
+                                                        {isLoadingCaption ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-hashtag"></i>} ✨ CRIAR LEGENDAS
                                                     </button>
                                                 </div>
                                             ) : (
                                                 <div className="flex-grow flex flex-col h-0">
-                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
-                                                        {aiCaption}
-                                                    </div>
-                                                    <button onClick={() => setAiCaption("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
-                                                        <i className="fas fa-redo"></i> Gerar Novamente
-                                                    </button>
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">{aiCaption}</div>
+                                                    <button onClick={() => setAiCaption("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg"><i className="fas fa-redo"></i> Gerar Novamente</button>
                                                 </div>
                                             )
                                         )}
-
-                                        {/* Conteúdo: Look */}
                                         {activeAiTab === 'look' && (
                                             !aiOutfit ? (
                                                 <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
-                                                    <div className="bg-red-950/30 p-4 rounded-full">
-                                                        <i className="fas fa-tshirt text-3xl text-red-600"></i>
-                                                    </div>
-                                                    <p className="text-xs text-slate-400 font-medium px-4">
-                                                        Sem ideias do que vestir? A IA sugere os melhores looks para curtir o evento com todo o conforto e estilo!
-                                                    </p>
+                                                    <div className="bg-red-950/30 p-4 rounded-full"><i className="fas fa-tshirt text-3xl text-red-600"></i></div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">Sem ideias do que vestir? A IA sugere os melhores looks para curtir o evento!</p>
                                                     <button onClick={handleGenerateOutfit} disabled={isLoadingOutfit} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
-                                                        {isLoadingOutfit ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-tshirt"></i>}
-                                                        ✨ SUGERIR LOOKS
+                                                        {isLoadingOutfit ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-tshirt"></i>} ✨ SUGERIR LOOKS
                                                     </button>
                                                 </div>
                                             ) : (
                                                 <div className="flex-grow flex flex-col h-0">
-                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
-                                                        {aiOutfit}
-                                                    </div>
-                                                    <button onClick={() => setAiOutfit("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
-                                                        <i className="fas fa-redo"></i> Gerar Novamente
-                                                    </button>
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">{aiOutfit}</div>
+                                                    <button onClick={() => setAiOutfit("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg"><i className="fas fa-redo"></i> Gerar Novamente</button>
                                                 </div>
                                             )
                                         )}
-
-                                        {/* Conteúdo: WhatsApp */}
                                         {activeAiTab === 'whats' && (
                                             !aiWhats ? (
                                                 <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
-                                                    <div className="bg-red-950/30 p-4 rounded-full">
-                                                        <i className="fab fa-whatsapp text-3xl text-red-600"></i>
-                                                    </div>
-                                                    <p className="text-xs text-slate-400 font-medium px-4">
-                                                        Entrou no grupo da excursão agora? Gere uma mensagem simpática e animada para quebrar o gelo com a malta!
-                                                    </p>
+                                                    <div className="bg-red-950/30 p-4 rounded-full"><i className="fab fa-whatsapp text-3xl text-red-600"></i></div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">Entrou no grupo da excursão agora? Gere uma mensagem simpática para quebrar o gelo!</p>
                                                     <button onClick={handleGenerateWhats} disabled={isLoadingWhats} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
-                                                        {isLoadingWhats ? <i className="fas fa-spinner fa-spin"></i> : <i className="fab fa-whatsapp"></i>}
-                                                        ✨ MENSAGEM DO GRUPO
+                                                        {isLoadingWhats ? <i className="fas fa-spinner fa-spin"></i> : <i className="fab fa-whatsapp"></i>} ✨ MENSAGEM GRUPO
                                                     </button>
                                                 </div>
                                             ) : (
                                                 <div className="flex-grow flex flex-col h-0">
-                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
-                                                        {aiWhats}
-                                                    </div>
-                                                    <button onClick={() => setAiWhats("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
-                                                        <i className="fas fa-redo"></i> Gerar Novamente
-                                                    </button>
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">{aiWhats}</div>
+                                                    <button onClick={() => setAiWhats("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg"><i className="fas fa-redo"></i> Gerar Novamente</button>
                                                 </div>
                                             )
                                         )}
-
-                                        {/* Conteúdo: Lanches */}
                                         {activeAiTab === 'lanches' && (
                                             !aiSnacks ? (
                                                 <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
-                                                    <div className="bg-red-950/30 p-4 rounded-full">
-                                                        <i className="fas fa-hamburger text-3xl text-red-600"></i>
-                                                    </div>
-                                                    <p className="text-xs text-slate-400 font-medium px-4">
-                                                        Não sabe o que levar para comer na viagem? A IA sugere opções práticas que não fazem sujidade!
-                                                    </p>
+                                                    <div className="bg-red-950/30 p-4 rounded-full"><i className="fas fa-hamburger text-3xl text-red-600"></i></div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">Não sabe o que levar para comer na viagem? A IA sugere opções práticas!</p>
                                                     <button onClick={handleGenerateSnacks} disabled={isLoadingSnacks} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
-                                                        {isLoadingSnacks ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-hamburger"></i>}
-                                                        ✨ SUGERIR LANCHES
+                                                        {isLoadingSnacks ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-hamburger"></i>} ✨ SUGERIR LANCHES
                                                     </button>
                                                 </div>
                                             ) : (
                                                 <div className="flex-grow flex flex-col h-0">
-                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
-                                                        {aiSnacks}
-                                                    </div>
-                                                    <button onClick={() => setAiSnacks("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
-                                                        <i className="fas fa-redo"></i> Gerar Novamente
-                                                    </button>
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">{aiSnacks}</div>
+                                                    <button onClick={() => setAiSnacks("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg"><i className="fas fa-redo"></i> Gerar Novamente</button>
                                                 </div>
                                             )
                                         )}
-
-                                        {/* Conteúdo: Curiosidades */}
                                         {activeAiTab === 'curiosidades' && (
                                             !aiTrivia ? (
                                                 <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
-                                                    <div className="bg-red-950/30 p-4 rounded-full">
-                                                        <i className="fas fa-lightbulb text-3xl text-red-600"></i>
-                                                    </div>
-                                                    <p className="text-xs text-slate-400 font-medium px-4">
-                                                        Entre no clima da viagem! Descubra curiosidades incríveis sobre o evento {formData.evento}.
-                                                    </p>
+                                                    <div className="bg-red-950/30 p-4 rounded-full"><i className="fas fa-lightbulb text-3xl text-red-600"></i></div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">Entre no clima da viagem! Descubra curiosidades incríveis sobre o evento {formData.evento}.</p>
                                                     <button onClick={handleGenerateTrivia} disabled={isLoadingTrivia} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
-                                                        {isLoadingTrivia ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-lightbulb"></i>}
-                                                        ✨ VER CURIOSIDADES
+                                                        {isLoadingTrivia ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-lightbulb"></i>} ✨ VER CURIOSIDADES
                                                     </button>
                                                 </div>
                                             ) : (
                                                 <div className="flex-grow flex flex-col h-0">
-                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
-                                                        {aiTrivia}
-                                                    </div>
-                                                    <button onClick={() => setAiTrivia("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
-                                                        <i className="fas fa-redo"></i> Gerar Novamente
-                                                    </button>
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">{aiTrivia}</div>
+                                                    <button onClick={() => setAiTrivia("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg"><i className="fas fa-redo"></i> Gerar Novamente</button>
                                                 </div>
                                             )
                                         )}
@@ -1170,36 +1137,23 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                         <i className="fas fa-times text-xl"></i>
                                     </button>
                                 </div>
-                                
                                 <div className="flex items-center gap-3 mb-6">
-                                    <div className="bg-red-600 p-2 rounded-lg text-white">
-                                        <i className="fas fa-magic text-xl"></i>
-                                    </div>
+                                    <div className="bg-red-600 p-2 rounded-lg text-white"><i className="fas fa-magic text-xl"></i></div>
                                     <h3 className="text-xl font-black uppercase tracking-tight">O Contrato em Miúdos ✨</h3>
                                 </div>
-
-                                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 text-sm leading-relaxed text-slate-700 whitespace-pre-wrap max-h-[60vh] overflow-y-auto">
-                                    {aiSummary}
-                                </div>
-
+                                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 text-sm leading-relaxed text-slate-700 whitespace-pre-wrap max-h-[60vh] overflow-y-auto">{aiSummary}</div>
                                 <div className="mt-8">
-                                    <button 
-                                        onClick={() => setShowAiModal(false)}
-                                        className="w-full py-4 bg-black text-white rounded-xl font-bold text-lg hover:bg-slate-800 transition-all active:scale-95"
-                                    >
-                                        ENTENDI, VOU ASSINAR!
-                                    </button>
+                                    <button onClick={() => setShowAiModal(false)} className="w-full py-4 bg-black text-white rounded-xl font-bold text-lg hover:bg-slate-800 transition-all active:scale-95">ENTENDI, VOU ASSINAR!</button>
                                 </div>
                                 <p className="mt-4 text-[9px] text-slate-400 uppercase font-bold text-center">Este resumo é gerado por IA para fins informativos. Prevalece o texto integral do contrato.</p>
                             </div>
                         </div>
                     )}
 
-                    {/* Toast para Mensagens de Erro/Alerta do Usuário */}
+                    {/* Toast para Mensagens */}
                     {toastMessage && (
-                        <div className="fixed bottom-6 right-6 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold flex items-center gap-3">
-                            <i className="fas fa-exclamation-circle text-xl"></i>
-                            {toastMessage}
+                        <div className="fixed bottom-6 right-6 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold flex items-center gap-3 animate-in slide-in-from-bottom-5">
+                            <i className="fas fa-info-circle text-xl"></i> {toastMessage}
                         </div>
                     )}
 
@@ -1207,9 +1161,7 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                     <div style={{ display: 'none' }}>
                         <div id="documento-template" className="bg-white p-12 font-sans text-black" style={{ width: '800px' }}>
                             <div className="border-4 border-black p-4 mb-8 bg-slate-50 text-[8pt] text-black font-mono leading-tight">
-                                <div id="metadata-topo-pdf" className="space-y-1">
-                                    {/* Preenchido via JS */}
-                                </div>
+                                <div id="metadata-topo-pdf" className="space-y-1"></div>
                                 <div className="mt-2 pt-2 border-t border-slate-300 flex justify-between">
                                     <span>AUTENTICAÇÃO ÚNICA: {authCode}</span>
                                     <span>SISTEMA FOLLOW TRIP - VERIFICAÇÃO LGPD</span>
@@ -1225,7 +1177,7 @@ Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
                                 {contrato}
                             </div>
 
-                            <div className="mt-16 pt-8 border-t-2 border-slate-200 evitar-quebra" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                            <div className="evitar-quebra mt-16 pt-8 border-t-2 border-slate-200" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                                 <div className="flex flex-col items-center justify-center">
                                     <img id="assinatura-final-img" alt="Assinatura" className="h-24 object-contain mb-2" />
                                     <div className="w-80 border-t-2 border-black mb-1"></div>
