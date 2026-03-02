@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Follow Trip - Assinatura Digital</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome para Ícones -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel para compilar JSX no navegador -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- html2pdf.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+        /* Estilos base para garantir o preenchimento correto */
+        body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; background-color: #000; color: #fff; }
+        .canvas-container { touch-action: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        // Configurações da API do Gemini
+        const apiKey = "";
+        const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
+
+        function App() {
+            // Estados para os campos do formulário
+            const [formData, setFormData] = useState({
+                nome: '', cpf: '', rg: '', orgaoEmissor: '', email: '',
+                telefone: '', cidadeEmbarque: '', evento: '', dataSaida: '',
+                horarioPrevisto: '', locaisEmbarque: '', dataRetorno: ''
+            });
+            
+            const [aceiteLgpd, setAceiteLgpd] = useState(false);
+            const [contrato, setContrato] = useState('');
+            const [etapa, setEtapa] = useState(1);
+            const canvasRef = useRef(null);
+            const [isDrawing, setIsDrawing] = useState(false);
+            const [isPdfGenerating, setIsPdfGenerating] = useState(false);
+            const [assinaturaDataUrl, setAssinaturaDataUrl] = useState(null);
+            const [authCode, setAuthCode] = useState(""); // Novo estado para o código de autenticação
+
+            // Estados para as funcionalidades de IA (Gemini)
+            const [aiSummary, setAiSummary] = useState("");
+            const [aiTips, setAiTips] = useState("");
+            const [isLoadingAi, setIsLoadingAi] = useState(false);
+            const [showAiModal, setShowAiModal] = useState(false);
+
+            // Novos Estados para o Kit de Bordo IA
+            const [activeAiTab, setActiveAiTab] = useState('dicas');
+            const [aiPlaylist, setAiPlaylist] = useState("");
+            const [isLoadingPlaylist, setIsLoadingPlaylist] = useState(false);
+            const [aiCaption, setAiCaption] = useState("");
+            const [isLoadingCaption, setIsLoadingCaption] = useState(false);
+            
+            // Novos Estados para as novas funções IA
+            const [aiOutfit, setAiOutfit] = useState("");
+            const [isLoadingOutfit, setIsLoadingOutfit] = useState(false);
+            const [aiWhats, setAiWhats] = useState("");
+            const [isLoadingWhats, setIsLoadingWhats] = useState(false);
+
+            // Novos Estados para Lanches e Curiosidades (IA)
+            const [aiSnacks, setAiSnacks] = useState("");
+            const [isLoadingSnacks, setIsLoadingSnacks] = useState(false);
+            const [aiTrivia, setAiTrivia] = useState("");
+            const [isLoadingTrivia, setIsLoadingTrivia] = useState(false);
+
+            // Estado para caixa de mensagens (substituindo o alert nativo)
+            const [toastMessage, setToastMessage] = useState("");
+
+            // --- NOVOS ESTADOS: ÁREA DO ADMINISTRADOR ---
+            const [viewMode, setViewMode] = useState('app'); // 'app' | 'admin'
+            const [isAdminAuth, setIsAdminAuth] = useState(false);
+            const [adminInput, setAdminInput] = useState('');
+            const [showAdminConfig, setShowAdminConfig] = useState(false);
+            const [newPassword, setNewPassword] = useState('');
+            const [confirmPassword, setConfirmPassword] = useState('');
+            const [searchTerm, setSearchTerm] = useState(''); // Estado para a barra de pesquisa/validação
+            
+            // Carregar contratos e senha do LocalStorage
+            const [contracts, setContracts] = useState(() => {
+                try { return JSON.parse(localStorage.getItem('followtrip_contracts') || '[]'); } 
+                catch { return []; }
+            });
+            const [adminPassword, setAdminPassword] = useState(() => {
+                return localStorage.getItem('followtrip_admin_pwd') || 'admin';
+            });
+
+            const showToast = (msg) => {
+                setToastMessage(msg);
+                setTimeout(() => setToastMessage(""), 4000);
+            };
+
+            // Função para chamar a API do Gemini com Exponential Backoff
+            const callGemini = async (prompt, systemInstruction = "") => {
+                let delay = 1000;
+                for (let i = 0; i < 5; i++) {
+                    try {
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ parts: [{ text: prompt }] }],
+                                systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined
+                            })
+                        });
+
+                        if (!response.ok) throw new Error('Falha na API');
+                        const data = await response.json();
+                        return data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    } catch (error) {
+                        if (i === 4) throw error;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        delay *= 2;
+                    }
+                }
+            };
+
+            // Template do contrato
+            const gerarTextoContrato = () => {
+                return `CONTRATO DE PRESTAÇÃO DE SERVIÇOS POR PASSAGEIRO:
+EXCURSÕES PARA FESTIVAIS E EVENTOS MUSICAIS
+
+1. IDENTIFICAÇÃO DAS PARTES
+CONTRATANTE:
+FOLLOW TRIP – IZAIAS GALOM DOS SANTOS JR, inscrito no CPF sob o nº 096.668.669-19, portador do RG nº 6.672.007 SSP/SC, residente e domiciliado na Rua Tusnelda Bachmann, nº 373, bairro Velha Central, cidade de Blumenau – SC, CEP 89040-320.
+
+PASSAGEIRO (CONTRATADO):
+Nome completo: ${formData.nome || '____________________'}
+CPF: ${formData.cpf || '____________________'} RG: ${formData.rg || '__________'} ${formData.orgaoEmissor || '____'}
+Telefone: ${formData.telefone || '____________________'}
+Cidade de embarque: ${formData.cidadeEmbarque || '____________________'}
+
+2. DO OBJETO
+2.1. O presente contrato tem como objeto a prestação de serviço de transporte FRETADO/INDIVIDUAL para participação em festival/evento musical, organizado por terceiros, com saída da(s) cidade(s) previamente informada(s) pela CONTRATANTE e destino ao local do evento.
+
+Parágrafo único: O(a) CONTRATANTE não é responsável pela organização, produção ou realização do evento, limitando-se exclusivamente ao serviço de transporte.
+
+3. DO ITINERÁRIO, CRONOGRAMA E LOGÍSTICA
+3.1. As informações de saída, retorno, pontos de embarque e horários serão previamente informadas ao PASSAGEIRO por meio de grupos oficiais da excursão (WhatsApp ou outro canal oficial).
+
+Evento: ${formData.evento || '____________________'}
+Data de saída: ${formData.dataSaida || '___/___/___'}
+Horário previsto: ${formData.horarioPrevisto || '___:___'}
+Local(is) de embarque: ${formData.locaisEmbarque || '____________________'}
+Data de retorno: ${formData.dataRetorno || '___/___/___'} (após o encerramento do evento)
+
+3.2. O retorno ocorrerá após o encerramento oficial do evento, respeitando tolerância máxima definida neste contrato.
+
+4. DA TOLERÂNCIA E RESPONSABILIDADE DO PASSAGEIRO
+4.1. Para o embarque inicial, haverá tolerância máxima de 10 (dez) minutos após o horário informado. Após esse período, o veículo seguirá viagem sem direito a reembolso.
+
+4.2. Para o retorno do evento, haverá tolerância máxima de 60 (sessenta) minutos após o horário final estipulado.
+É de responsabilidade exclusiva do PASSAGEIRO localizar o ônibus e o responsável pela excursão no local do evento.
+
+Parágrafo único: O não comparecimento no horário de retorno implica perda do direito ao transporte, sem qualquer reembolso ou responsabilidade da CONTRATANTE.
+
+5. DA POLÍTICA DE CANCELAMENTO, DESISTÊNCIA E REEMBOLSO
+5.1. O PASSAGEIRO declara estar ciente de que não haverá reembolso em caso de:
+- desistência voluntária;
+- não comparecimento no embarque;
+- atraso;
+- problemas pessoais;
+- desistência após confirmação da vaga.
+
+5.2. O reembolso integral somente será possível até 05 (cinco) dias corridos após a data do pagamento. Após o prazo de 05 (cinco) dias e até o limite de 07 (sete) dias corridos da data do pagamento, o CONTRATANTE terá direito a reembolso parcial correspondente a 25% (vinte e cinco por cento) do valor pago. Após o prazo de 07 (sete) dias corridos da data do pagamento, não haverá qualquer reembolso, sendo o valor integralmente retido. Somente será possível caso o PASSAGEIRO transfira ou venda sua vaga a outra pessoa, devendo comunicar previamente a CONTRATANTE e fornecer todos os dados do novo passageiro.
+
+5.3. Caso a vaga não seja repassada, o valor pago será integralmente retido, sem direito a crédito ou remarcação.
+
+5.4. Excepcionalmente, em caso de cancelamento definitivo do evento (e não adiamento), a CONTRATANTE avaliará a possibilidade de reembolso proporcional, descontadas despesas operacionais já assumidas.
+
+6. DAS RESPONSABILIDADES
+6.1. A CONTRATANTE compromete-se a realizar o transporte com segurança, obedcendo às normas de trânsito e manutenção veicular.
+
+6.2. A CONTRATANTE não se responsabiliza por:
+- objetos pessoais esquecidos no veículo;
+- condutas inadequadas do PASSAGEIRO durante o evento;
+- alterações na programação do evento;
+- ações de terceiros ou da organização do evento.
+
+6.3. É proibido ao PASSAGEIRO causar danos ao veículo. Em caso de dano, o responsável arcará integralmente com os custos.
+
+7. DO PAGAMENTO
+7.1. O valor da excursão será informado previamente e a vaga será considerada confirmada somente após o pagamento.
+
+Parágrafo único: As vagas são limitadas e preenchidas por ordem de pagamento.
+
+8. DA VIGÊNCIA E DISPOSIÇÕES FINAIS
+8.1. O presente contrato passa a vigorar a partir da confirmação do pagamento e encerra-se após o desembarque final do PASSAGEIRO.
+
+8.2. Ao efetuar o pagamento, o PASSAGEIRO declara que leu, compreendeu e concorda integralmente com Todos os termos deste contrato.`;
+            };
+
+            useEffect(() => {
+                setContrato(gerarTextoContrato());
+            }, [formData]);
+
+            useEffect(() => {
+                if (etapa === 2 && canvasRef.current && viewMode === 'app') {
+                    const canvas = canvasRef.current;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.lineWidth = 3;
+                    ctx.lineCap = 'round';
+                    ctx.strokeStyle = '#000000';
+                }
+            }, [etapa, viewMode]);
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData({ ...formData, [name]: value });
+            };
+
+            const handleCpfChange = (e) => {
+                let value = e.target.value.replace(/\D/g, '').slice(0, 11);
+                value = value.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+                setFormData({ ...formData, cpf: value });
+            };
+
+            const handlePhoneChange = (e) => {
+                let value = e.target.value.replace(/\D/g, '').slice(0, 11);
+                if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
+                else if (value.length > 5) value = value.replace(/^(\d{2})(\d{4})(\d{0,4}).*/, '($1) $2-$3');
+                else if (value.length > 2) value = value.replace(/^(\d{2})(\d{0,5})/, '($1) $2');
+                else value = value.replace(/^(\d*)/, '($1');
+                setFormData({ ...formData, telefone: value });
+            };
+
+            const getCoordinates = (e) => {
+                const canvas = canvasRef.current;
+                if (!canvas) return { x: 0, y: 0 };
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+            };
+
+            const startDrawing = (e) => {
+                const { x, y } = getCoordinates(e);
+                const ctx = canvasRef.current.getContext('2d');
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                setIsDrawing(true);
+            };
+
+            const draw = (e) => {
+                if (!isDrawing) return;
+                const { x, y } = getCoordinates(e);
+                const ctx = canvasRef.current.getContext('2d');
+                ctx.lineTo(x, y);
+                ctx.stroke();
+            };
+
+            const stopDrawing = () => { if (isDrawing) { canvasRef.current.getContext('2d').closePath(); setIsDrawing(false); } };
+
+            const handleSummarizeContract = async () => {
+                setIsLoadingAi(true);
+                const systemPrompt = "Você é um assistente jurídico amigável. Seu objetivo é resumir contratos de excursão em linguagem extremamente simples, destacando apenas o que é essencial para o passageiro.";
+                const userPrompt = `Por favor, resuma os pontos principais deste contrato de excursão para que o passageiro entenda rapidamente suas obrigações e direitos. Foque em: tolerância de atraso, política de cancelamento e o que a empresa não se responsabiliza. Contrato: ${contrato}`;
+                
+                try {
+                    const summary = await callGemini(userPrompt, systemPrompt);
+                    setAiSummary(summary);
+                    setShowAiModal(true);
+                } catch (error) {
+                    showToast("Não foi possível gerar o resumo no momento.");
+                } finally {
+                    setIsLoadingAi(false);
+                }
+            };
+
+            const handleGenerateTips = async () => {
+                setIsLoadingAi(true);
+                const systemPrompt = "Você é um guia de viagens experiente em festivais e eventos musicais.";
+                const userPrompt = `Gere uma lista curta de dicas e itens essenciais que eu devo levar na mochila para o evento "${formData.evento}" que acontecerá em "${formData.dataSaida}". Considere o clima provável e o tipo de evento. Seja direto e use bullet points.`;
+                
+                try {
+                    const tips = await callGemini(userPrompt, systemPrompt);
+                    setAiTips(tips);
+                } catch (error) {
+                    showToast("Não foi possível gerar as dicas no momento.");
+                } finally {
+                    setIsLoadingAi(false);
+                }
+            };
+
+            const handleGeneratePlaylist = async () => {
+                setIsLoadingPlaylist(true);
+                const systemPrompt = "Você é um DJ animado de excursões da Follow Trip.";
+                const userPrompt = `Gere uma playlist de 'Esquenta' com as 5 melhores músicas para ouvir no autocarro/ônibus a caminho do evento "${formData.evento}". Coloque no formato '1. Artista - Música'. Adicione uma breve frase animada no início para o passageiro.`;
+                
+                try {
+                    const result = await callGemini(userPrompt, systemPrompt);
+                    setAiPlaylist(result);
+                } catch (error) {
+                    showToast("Não foi possível gerar a playlist.");
+                } finally {
+                    setIsLoadingPlaylist(false);
+                }
+            };
+
+            const handleGenerateCaption = async () => {
+                setIsLoadingCaption(true);
+                const systemPrompt = "Você é um especialista em redes sociais focado em turismo e festivais.";
+                const userPrompt = `Crie 3 opções curtas e criativas de legendas para o Instagram para alguém que acabou de assinar o contrato e garantir a sua viagem para o evento "${formData.evento}" com a agência de excursões Follow Trip. Use emojis e a hashtag #FollowTrip.`;
+                
+                try {
+                    const result = await callGemini(userPrompt, systemPrompt);
+                    setAiCaption(result);
+                } catch (error) {
+                    showToast("Não foi possível gerar as legendas.");
+                } finally {
+                    setIsLoadingCaption(false);
+                }
+            };
+
+            const handleGenerateOutfit = async () => {
+                setIsLoadingOutfit(true);
+                const systemPrompt = "Você é um consultor de moda experiente focado em conforto e estilo para festivais e viagens longas de autocarro/ônibus.";
+                const userPrompt = `Sugira 2 opções rápidas de looks (um para clima frio e um para clima quente) para ir ao evento "${formData.evento}" partindo da cidade de "${formData.cidadeEmbarque}". Seja direto, use bullet points e emojis.`;
+                
+                try {
+                    const result = await callGemini(userPrompt, systemPrompt);
+                    setAiOutfit(result);
+                } catch (error) {
+                    showToast("Não foi possível gerar as sugestões de look.");
+                } finally {
+                    setIsLoadingOutfit(false);
+                }
+            };
+
+            const handleGenerateWhats = async () => {
+                setIsLoadingWhats(true);
+                const systemPrompt = "Você é uma pessoa super animada, educada e simpática.";
+                const userPrompt = `Escreva uma mensagem muito curta e amigável (máximo 2 linhas) para eu copiar e enviar no grupo de WhatsApp da excursão da Follow Trip para me apresentar. Meu nome é "${formData.nome}", estou indo para o evento "${formData.evento}" e embarco na cidade de "${formData.cidadeEmbarque}". Use emojis.`;
+                
+                try {
+                    const result = await callGemini(userPrompt, systemPrompt);
+                    setAiWhats(result);
+                } catch (error) {
+                    showToast("Não foi possível gerar a mensagem.");
+                } finally {
+                    setIsLoadingWhats(false);
+                }
+            };
+
+            const handleGenerateSnacks = async () => {
+                setIsLoadingSnacks(true);
+                const systemPrompt = "Você é um especialista em viagens de ônibus e nutrição prática.";
+                const userPrompt = `Sugira 5 lanches práticos, que não estragam rápido e não fazem muita sujeira para levar numa viagem de excursão saindo de "${formData.cidadeEmbarque}" para o evento "${formData.evento}". Use emojis e seja direto.`;
+                
+                try {
+                    const result = await callGemini(userPrompt, systemPrompt);
+                    setAiSnacks(result);
+                } catch (error) {
+                    showToast("Não foi possível gerar as dicas de lanches.");
+                } finally {
+                    setIsLoadingSnacks(false);
+                }
+            };
+
+            const handleGenerateTrivia = async () => {
+                setIsLoadingTrivia(true);
+                const systemPrompt = "Você é um especialista em cultura pop, música e grandes eventos.";
+                const userPrompt = `Escreva 3 curiosidades curtas e muito interessantes sobre o evento "${formData.evento}". Se o evento for genérico, dê curiosidades divertidas sobre festivais de música. Use emojis e tom de voz animado.`;
+                
+                try {
+                    const result = await callGemini(userPrompt, systemPrompt);
+                    setAiTrivia(result);
+                } catch (error) {
+                    showToast("Não foi possível gerar as curiosidades.");
+                } finally {
+                    setIsLoadingTrivia(false);
+                }
+            };
+
+            const finalizarAssinatura = () => {
+                if (!aceiteLgpd) return showToast("É necessário aceitar os termos e a Lei LGPD.");
+                const dataUrl = canvasRef.current.toDataURL('image/png');
+                setAssinaturaDataUrl(dataUrl);
+
+                // --- NOVO: Gerar código de autenticação único antes de salvar ---
+                const generatedCode = 'FLW-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+                setAuthCode(generatedCode);
+
+                const newContract = {
+                    id: Date.now().toString(),
+                    ...formData,
+                    signedAt: new Date().toISOString(),
+                    authCode: generatedCode // Código armazenado permanentemente para validação no Admin
+                };
+                
+                const updatedContracts = [...contracts, newContract];
+                setContracts(updatedContracts);
+                localStorage.setItem('followtrip_contracts', JSON.stringify(updatedContracts));
+                // ---------------------------------------------
+
+                setEtapa(3);
+            };
+
+            const gerarPDF = async () => {
+                if (!window.html2pdf) return showToast("A aguardar o carregamento do gerador de PDF...");
+                setIsPdfGenerating(true);
+                
+                const imgElement = document.getElementById('assinatura-final-img');
+                if (imgElement) imgElement.src = assinaturaDataUrl;
+
+                const element = document.getElementById('documento-template');
+                element.style.display = 'block';
+                
+                const agora = new Date();
+                const dataFormatada = agora.toLocaleDateString('pt-BR');
+                const horaFormatada = agora.toLocaleTimeString('pt-BR');
+                
+                const dataRodape = document.getElementById('data-documento');
+                if (dataRodape) dataRodape.innerText = `Assinado em: ${dataFormatada} às ${horaFormatada}`;
+                
+                const metaTopo = document.getElementById('metadata-topo-pdf');
+                if (metaTopo) {
+                    metaTopo.innerHTML = `
+                        <div style="font-size: 10pt; font-weight: bold; color: #000; margin-bottom: 5px;">CERTIFICADO DE ASSINATURA DIGITAL</div>
+                        <div>SIGNATÁRIO: ${formData.nome.toUpperCase()}</div>
+                        <div>DATA DA ASSINATURA: ${dataFormatada}</div>
+                        <div>HORÁRIO DA ASSINATURA: ${horaFormatada}</div>
+                        <div>STATUS: DOCUMENTO ASSINADO E VERIFICADO</div>
+                    `;
+                }
+                
+                // Configuração atualizada para forçar adequação em A4 e evitar a quebra do bloco de assinatura
+                const opts = { 
+                    margin: 10, 
+                    filename: `Contrato_FollowTrip_${formData.nome.replace(/\s+/g, '_')}.pdf`, 
+                    image: { type: 'jpeg', quality: 0.98 }, 
+                    html2canvas: { scale: 2 }, 
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                    pagebreak: { mode: ['css', 'legacy'], avoid: '.evitar-quebra' }
+                };
+
+                try { 
+                    await window.html2pdf().set(opts).from(element).save(); 
+                } catch (err) {
+                    console.error(err);
+                } finally { 
+                    element.style.display = 'none'; 
+                    setIsPdfGenerating(false); 
+                }
+            };
+
+            const avancarParaEtapa2 = () => {
+                // Valida se já existe um contrato com o mesmo CPF para o mesmo Evento
+                const contratoExistente = contracts.find(
+                    c => c.cpf === formData.cpf && 
+                         c.evento.toLowerCase().trim() === formData.evento.toLowerCase().trim()
+                );
+
+                if (contratoExistente) {
+                    showToast(`Atenção: O CPF ${formData.cpf} já possui um contrato assinado para o evento "${formData.evento}".`);
+                    return;
+                }
+                
+                setEtapa(2);
+            };
+
+            // Validação: Todos os campos devem estar preenchidos
+            const isFormValid = Object.values(formData).every(val => val.trim() !== '');
+
+            // --- LÓGICA DO ADMINISTRADOR ---
+            const handleAdminLogin = (e) => {
+                e.preventDefault();
+                if (adminInput === adminPassword) {
+                    setIsAdminAuth(true);
+                    setAdminInput('');
+                } else {
+                    showToast("Senha incorreta!");
+                }
+            };
+
+            const handleUpdatePassword = (e) => {
+                e.preventDefault();
+                if (newPassword !== confirmPassword) {
+                    showToast("As senhas não coincidem!");
+                    return;
+                }
+                if (newPassword.length < 4) {
+                    showToast("A senha deve ter pelo menos 4 caracteres.");
+                    return;
+                }
+                setAdminPassword(newPassword);
+                localStorage.setItem('followtrip_admin_pwd', newPassword);
+                showToast("Senha alterada com sucesso!");
+                setShowAdminConfig(false);
+                setNewPassword('');
+                setConfirmPassword('');
+            };
+
+            const exportToCSV = (eventName, eventContracts) => {
+                const headers = ['Data/Hora Assinatura', 'Código Autenticação', 'Nome do Evento', 'Nome do Passageiro', 'CPF', 'RG', 'Órgão Emissor', 'E-mail', 'Telefone', 'Cidade Embarque', 'Data Saída', 'Horário Previsto', 'Locais Embarque', 'Data Retorno'];
+                
+                const rows = eventContracts.map(c => [
+                    new Date(c.signedAt).toLocaleString('pt-BR'),
+                    `"${c.authCode || 'N/A'}"`, // Inclui o código no CSV
+                    `"${c.evento || ''}"`,
+                    `"${c.nome || ''}"`,
+                    `"${c.cpf || ''}"`,
+                    `"${c.rg || ''}"`,
+                    `"${c.orgaoEmissor || ''}"`,
+                    `"${c.email || ''}"`,
+                    `"${c.telefone || ''}"`,
+                    `"${c.cidadeEmbarque || ''}"`,
+                    `"${c.dataSaida || ''}"`,
+                    `"${c.horarioPrevisto || ''}"`,
+                    `"${c.locaisEmbarque || ''}"`,
+                    `"${c.dataRetorno || ''}"`
+                ]);
+
+                // Adiciona BOM para que o Excel identifique UTF-8 com acentos
+                const csvContent = '\uFEFF' + [
+                    headers.join(','),
+                    ...rows.map(e => e.join(','))
+                ].join('\n');
+
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+                link.setAttribute('href', url);
+                link.setAttribute('download', `contratos_${eventName.replace(/\s+/g, '_')}_${new Date().getTime()}.csv`);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            // RENDERIZAÇÃO DA TELA DO ADMIN
+            if (viewMode === 'admin') {
+                if (!isAdminAuth) {
+                    return (
+                        <div className="min-h-screen bg-black text-white flex items-center justify-center p-4 font-sans">
+                            <div className="max-w-md w-full bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl relative">
+                                <button onClick={() => setViewMode('app')} className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors">
+                                    <i className="fas fa-times text-xl"></i>
+                                </button>
+                                <div className="text-center mb-6">
+                                    <div className="bg-red-900/30 p-4 rounded-full inline-block mb-4">
+                                        <i className="fas fa-shield-alt text-4xl text-red-600"></i>
+                                    </div>
+                                    <h2 className="text-2xl font-black uppercase tracking-tight">Área Restrita</h2>
+                                    <p className="text-slate-400 text-sm mt-1">Acesso exclusivo para administradores</p>
+                                </div>
+                                <form onSubmit={handleAdminLogin} className="space-y-4">
+                                    <div>
+                                        <input 
+                                            type="password" 
+                                            required 
+                                            value={adminInput}
+                                            onChange={(e) => setAdminInput(e.target.value)}
+                                            placeholder="Senha de Acesso (padrão: admin)" 
+                                            className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl outline-none focus:border-red-600 text-white placeholder-slate-500"
+                                        />
+                                    </div>
+                                    <button type="submit" className="w-full bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-700 transition-all uppercase tracking-widest text-sm">
+                                        Entrar
+                                    </button>
+                                </form>
+                                {/* Toast Admin Login */}
+                                {toastMessage && (
+                                    <div className="mt-4 bg-red-500/10 border border-red-500/50 text-red-500 text-sm font-bold text-center px-4 py-2 rounded-lg">
+                                        {toastMessage}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                }
+
+                // Lógica de Filtro/Pesquisa na Tela do Admin
+                const filteredContracts = contracts.filter(contract => {
+                    if (!searchTerm) return true;
+                    const term = searchTerm.toLowerCase();
+                    return (
+                        (contract.nome || '').toLowerCase().includes(term) ||
+                        (contract.cpf || '').includes(term) ||
+                        (contract.authCode || '').toLowerCase().includes(term) ||
+                        (contract.evento || '').toLowerCase().includes(term)
+                    );
+                });
+
+                // Agrupar contratos filtrados por NOME DO EVENTO
+                const groupedContracts = filteredContracts.reduce((acc, contract) => {
+                    const event = contract.evento || 'Evento Desconhecido';
+                    if (!acc[event]) acc[event] = [];
+                    acc[event].push(contract);
+                    return acc;
+                }, {});
+
+                return (
+                    <div className="min-h-screen bg-black text-white p-4 md:p-8 font-sans">
+                        <div className="max-w-7xl mx-auto space-y-6">
+                            
+                            {/* Header Admin */}
+                            <header className="bg-slate-900 rounded-2xl p-6 shadow-xl border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
+                                <div className="flex items-center gap-4">
+                                    <div className="bg-red-600 p-3 rounded-lg"><i className="fas fa-lock text-xl text-white"></i></div>
+                                    <div>
+                                        <h1 className="text-2xl font-bold text-white uppercase tracking-tighter">Dashboard Admin</h1>
+                                        <p className="text-slate-400 text-sm">Gestão de passageiros e contratos</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <button onClick={() => setShowAdminConfig(!showAdminConfig)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-bold transition-all flex items-center gap-2">
+                                        <i className="fas fa-cog text-slate-300"></i> Configurações
+                                    </button>
+                                    <button onClick={() => { setIsAdminAuth(false); setViewMode('app'); }} className="px-4 py-2 bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white rounded-lg text-sm font-bold transition-all flex items-center gap-2">
+                                        <i className="fas fa-sign-out-alt"></i> Sair
+                                    </button>
+                                </div>
+                            </header>
+
+                            {/* Alterar Senha */}
+                            {showAdminConfig && (
+                                <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 animate-in fade-in">
+                                    <h3 className="text-lg font-bold mb-4 uppercase text-red-500 border-b border-slate-800 pb-2">Alterar Senha do Sistema</h3>
+                                    <form onSubmit={handleUpdatePassword} className="max-w-md space-y-4">
+                                        <input 
+                                            type="password" required placeholder="Nova Senha" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                                            className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg outline-none focus:border-red-600"
+                                        />
+                                        <input 
+                                            type="password" required placeholder="Confirmar Nova Senha" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                                            className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg outline-none focus:border-red-600"
+                                        />
+                                        <div className="flex gap-2">
+                                            <button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors text-sm">Salvar</button>
+                                            <button type="button" onClick={() => setShowAdminConfig(false)} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors text-sm">Cancelar</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            )}
+
+                            {/* Barra de Pesquisa / Validação */}
+                            <div className="bg-slate-900 rounded-2xl p-4 shadow-xl border border-slate-800 flex items-center mb-6">
+                                <div className="relative w-full">
+                                    <i className="fas fa-search absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400"></i>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Validar contrato: Pesquise por Nome, CPF, Código de Autenticação (ex: FLW-...) ou Evento" 
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        className="w-full pl-12 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-xl outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 text-white transition-all"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Lista de Eventos / Contratos */}
+                            {Object.keys(groupedContracts).length === 0 ? (
+                                <div className="bg-slate-900 p-12 rounded-2xl border border-slate-800 text-center text-slate-500">
+                                    <i className="fas fa-file-signature text-4xl mb-4 opacity-30"></i>
+                                    <p className="text-lg font-medium">Nenhum contrato encontrado com base nos filtros.</p>
+                                </div>
+                            ) : (
+                                Object.entries(groupedContracts).map(([eventName, eventContracts]) => (
+                                    <div key={eventName} className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden mb-6 shadow-xl animate-in fade-in">
+                                        <div className="bg-slate-800/50 px-6 py-4 border-b border-slate-700 flex flex-col sm:flex-row justify-between items-center gap-4">
+                                            <h2 className="text-lg font-bold text-white uppercase flex items-center">
+                                                <span className="bg-red-600 text-white text-xs px-2.5 py-1 rounded-full mr-3 shadow-sm">{eventContracts.length}</span>
+                                                {eventName}
+                                            </h2>
+                                            <button onClick={() => exportToCSV(eventName, eventContracts)} className="flex items-center px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-xs font-bold shadow-md">
+                                                <i className="fas fa-file-excel mr-2 text-sm"></i> Exportar Dados (CSV)
+                                            </button>
+                                        </div>
+
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left text-sm text-slate-300">
+                                                <thead className="text-xs text-slate-400 uppercase bg-slate-800/30 border-b border-slate-700">
+                                                    <tr>
+                                                        <th className="px-6 py-4 font-bold">Passageiro</th>
+                                                        <th className="px-6 py-4 font-bold">Documentos</th>
+                                                        <th className="px-6 py-4 font-bold">Contato</th>
+                                                        <th className="px-6 py-4 font-bold">Logística</th>
+                                                        <th className="px-6 py-4 font-bold text-right">Validação (Admin)</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-800">
+                                                    {eventContracts.map((contract) => (
+                                                        <tr key={contract.id} className="hover:bg-slate-800/40 transition-colors">
+                                                            <td className="px-6 py-4 font-medium text-white whitespace-nowrap">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="bg-slate-700 p-2 rounded-full"><i className="fas fa-user text-slate-300"></i></div>
+                                                                    {contract.nome}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                                <div className="text-slate-300">CPF: <span className="text-white">{contract.cpf}</span></div>
+                                                                <div className="text-xs text-slate-500 mt-0.5">RG: {contract.rg} ({contract.orgaoEmissor})</div>
+                                                            </td>
+                                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                                <div className="text-slate-300">{contract.telefone}</div>
+                                                                <div className="text-xs text-slate-500 mt-0.5">{contract.email}</div>
+                                                            </td>
+                                                            <td className="px-6 py-4 whitespace-nowrap text-xs">
+                                                                <div>Saída: <span className="text-slate-300">{contract.dataSaida} {contract.horarioPrevisto}</span></div>
+                                                                <div className="mt-0.5">Embarque: <span className="text-slate-300">{contract.cidadeEmbarque}</span></div>
+                                                            </td>
+                                                            <td className="px-6 py-4 whitespace-nowrap text-right">
+                                                                <div className="text-[10px] text-slate-400 mb-1">CÓDIGO: <strong className="text-white font-mono">{contract.authCode || 'N/D'}</strong></div>
+                                                                <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-green-500/10 text-green-400 border border-green-500/20 text-[10px] font-bold">
+                                                                    <i className="fas fa-check-circle mr-1.5"></i>
+                                                                    {new Date(contract.signedAt).toLocaleString('pt-BR')}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+
+                            {/* Toast Admin General */}
+                            {toastMessage && (
+                                <div className="fixed bottom-6 right-6 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold flex items-center gap-3">
+                                    <i className="fas fa-info-circle text-xl"></i> {toastMessage}
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- RENDERIZAÇÃO DA APLICAÇÃO PRINCIPAL (APP) ---
+            return (
+                <div className="min-h-screen bg-black text-white p-4 md:p-8 font-sans relative">
+                    {/* Botão para acesso ao painel de administração */}
+                    <button 
+                        onClick={() => setViewMode('admin')} 
+                        className="absolute top-4 right-4 md:top-8 md:right-8 bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all z-10"
+                    >
+                        <i className="fas fa-shield-alt text-red-600"></i> Admin
+                    </button>
+
+                    <div className="max-w-6xl mx-auto space-y-6">
+                        
+                        {/* Header Original */}
+                        <header className="bg-red-600 rounded-2xl p-6 shadow-xl border border-red-500 flex items-center justify-between mt-12 md:mt-0">
+                            <div className="flex items-center gap-4 cursor-pointer" title="Voltar ao início" onClick={() => setEtapa(1)}>
+                                <div className="bg-black p-3 rounded-lg"><i className="fas fa-pen-nib text-xl text-red-600"></i></div>
+                                <div>
+                                    <h1 className="text-2xl font-bold text-white uppercase tracking-tighter hover:text-red-200 transition-colors">Follow Trip</h1>
+                                    <p className="text-red-100 text-sm">
+                                        {etapa === 1 && 'Etapa 1: Dados do Passageiro e Evento'}
+                                        {etapa === 2 && 'Etapa 2: Contrato e Assinatura'}
+                                        {etapa === 3 && 'Etapa 3: Conclusão e Download'}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="hidden sm:flex items-center gap-3 pr-4">
+                                {[1, 2, 3].map(num => (
+                                    <React.Fragment key={num}>
+                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold border-2 ${etapa >= num ? 'bg-white text-red-600 border-white' : 'bg-transparent text-white border-red-400'}`}>{num}</div>
+                                        {num < 3 && <div className={`w-8 h-1 rounded ${etapa > num ? 'bg-white' : 'bg-red-400'}`}></div>}
+                                    </React.Fragment>
+                                ))}
+                            </div>
+                        </header>
+
+                        {etapa === 1 && (
+                            <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in zoom-in-95">
+                                <section className="bg-white text-black rounded-2xl p-6 shadow-lg">
+                                    <h2 className="text-lg font-bold mb-6 flex items-center gap-2 pb-4 border-b border-slate-100 text-red-600 uppercase"><i className="fas fa-user text-lg"></i> Dados do Passageiro</h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="md:col-span-2">
+                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Nome Completo *</label>
+                                            <input type="text" name="nome" value={formData.nome} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-red-600 bg-slate-50" placeholder="Ex: Maria Oliveira" required />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">CPF *</label>
+                                            <input type="text" value={formData.cpf} onChange={handleCpfChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="000.000.000-00" required />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">RG *</label>
+                                                <input type="text" name="rg" value={formData.rg} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="RG" required />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Órgão *</label>
+                                                <input type="text" name="orgaoEmissor" value={formData.orgaoEmissor} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="SSP/SC" required />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">E-mail *</label>
+                                            <input type="email" name="email" value={formData.email} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="email@exemplo.com" required />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">WhatsApp *</label>
+                                            <input type="text" value={formData.telefone} onChange={handlePhoneChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="(47) 99999-9999" required />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Cidade de Embarque *</label>
+                                            <input type="text" name="cidadeEmbarque" value={formData.cidadeEmbarque} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="Ex: Blumenau - Posto Ipiranga" required />
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section className="bg-white text-black rounded-2xl p-6 shadow-lg">
+                                    <h2 className="text-lg font-bold mb-6 flex items-center gap-2 pb-4 border-b border-slate-100 text-red-600 uppercase"><i className="fas fa-map-marker-alt text-lg text-red-600"></i> Dados do Evento</h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="md:col-span-2">
+                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Nome do Evento *</label>
+                                            <input type="text" name="evento" value={formData.evento} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-red-600 bg-slate-50" placeholder="Ex: Festival de Música 2024" required />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Data Saída *</label>
+                                                <input type="text" name="dataSaida" value={formData.dataSaida} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="DD/MM/AAAA" required />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Horário *</label>
+                                                <input type="text" name="horarioPrevisto" value={formData.horarioPrevisto} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="00:00" required />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Data Retorno *</label>
+                                            <input type="text" name="dataRetorno" value={formData.dataRetorno} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="DD/MM/AAAA" required />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Locais de Embarque *</label>
+                                            <input type="text" name="locaisEmbarque" value={formData.locaisEmbarque} onChange={handleInputChange} className="w-full px-4 py-2.5 border border-slate-300 rounded-lg outline-none bg-slate-50" placeholder="Liste os pontos de encontro" required />
+                                        </div>
+                                    </div>
+                                    <p className="mt-4 text-[10px] text-slate-400 italic text-right">* Todos os campos são de preenchimento obrigatório.</p>
+                                </section>
+
+                                <div className="flex justify-end pt-2">
+                                    <button onClick={avancarParaEtapa2} disabled={!isFormValid} className={`flex items-center gap-2 px-8 py-3.5 rounded-xl font-bold text-lg transition-all shadow-lg ${!isFormValid ? 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-50' : 'bg-red-600 text-white hover:bg-red-700 active:scale-95'}`}>PRÓXIMA ETAPA <i className="fas fa-arrow-right"></i></button>
+                                </div>
+                            </div>
+                        )}
+
+                        {etapa === 2 && (
+                            <div className="space-y-6 animate-in fade-in slide-in-from-right-8">
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    <section className="bg-white text-black rounded-2xl p-6 shadow-lg flex flex-col h-full border-l-4 border-red-600">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h2 className="text-lg font-bold flex items-center gap-2 text-red-600 uppercase"><i className="fas fa-file-alt"></i> Revisão do Contrato</h2>
+                                            <button 
+                                                onClick={handleSummarizeContract}
+                                                disabled={isLoadingAi}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-black text-white rounded-lg text-xs font-bold hover:bg-slate-800 transition-all disabled:opacity-50"
+                                            >
+                                                {isLoadingAi ? <i className="fas fa-spinner fa-spin text-sm"></i> : <i className="fas fa-magic text-yellow-400"></i>}
+                                                ✨ RESUMIR COM IA
+                                            </button>
+                                        </div>
+                                        <textarea value={contrato} readOnly className="w-full flex-grow min-h-[450px] p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none text-xs leading-relaxed resize-none font-mono" />
+                                    </section>
+
+                                    <section className="bg-white text-black rounded-2xl p-6 shadow-lg flex flex-col h-full border-l-4 border-red-600">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h2 className="text-lg font-bold flex items-center gap-2 text-red-600 uppercase"><i className="fas fa-pen-nib"></i> Assinatura Digital</h2>
+                                            <button onClick={() => { const ctx = canvasRef.current.getContext('2d'); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 600, 350); }} className="text-xs text-red-600 font-bold hover:bg-red-50 px-2 py-1 rounded transition">LIMPAR</button>
+                                        </div>
+                                        <div className="border-2 border-dashed border-slate-300 rounded-xl overflow-hidden bg-white relative cursor-crosshair flex-grow min-h-[300px] flex canvas-container">
+                                            <canvas ref={canvasRef} width={600} height={350} className="w-full h-full object-contain bg-white block" onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseLeave={stopDrawing} onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing} />
+                                            {!isDrawing && <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20 font-bold text-black uppercase tracking-widest text-center">Assine aqui com o rato ou o dedo</div>}
+                                        </div>
+                                        
+                                        <div className="mt-6 bg-red-50 p-4 rounded-xl border border-red-100">
+                                            <label className="flex items-start gap-3 cursor-pointer group">
+                                                <input type="checkbox" checked={aceiteLgpd} onChange={(e) => setAceiteLgpd(e.target.checked)} className="mt-1 w-5 h-5 accent-red-600 rounded cursor-pointer" />
+                                                <span className="text-sm text-slate-700 leading-tight select-none">
+                                                    Li e aceito todos os termos do contrato e estou ciente da <a href="https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm" target="_blank" rel="noopener noreferrer" className="text-red-600 font-bold underline decoration-2 hover:text-red-700">LEI LGPD</a>. Confirmo que os meus dados serão utilizados exclusivamente para fins desta prestação de serviço.
+                                                </span>
+                                            </label>
+                                        </div>
+                                    </section>
+                                </div>
+
+                                <div className="flex justify-between items-center pt-4">
+                                    <button onClick={() => setEtapa(1)} className="flex items-center gap-2 px-6 py-3.5 rounded-xl text-white font-bold hover:bg-white/10 transition-all uppercase"><i className="fas fa-arrow-left"></i> Voltar</button>
+                                    <button onClick={finalizarAssinatura} disabled={!aceiteLgpd} className={`flex items-center gap-2 px-10 py-3.5 rounded-xl text-white font-bold text-lg transition-all shadow-xl uppercase ${!aceiteLgpd ? 'bg-slate-700 cursor-not-allowed opacity-50' : 'bg-red-600 hover:bg-red-700 active:scale-95'}`}>Confirmar e Finalizar</button>
+                                </div>
+                            </div>
+                        )}
+
+                        {etapa === 3 && (
+                            <div className="max-w-4xl mx-auto py-8 animate-in fade-in zoom-in-95 grid grid-cols-1 md:grid-cols-5 gap-6">
+                                
+                                {/* Card Principal de Sucesso */}
+                                <div className="md:col-span-3 bg-white text-black rounded-3xl p-8 shadow-2xl border-t-8 border-red-600 text-center space-y-8 h-fit">
+                                    <div className="flex justify-center">
+                                        <div className="bg-green-100 p-4 rounded-full"><i className="fas fa-check-circle text-5xl text-green-600"></i></div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <h2 className="text-3xl font-black text-black uppercase tracking-tight">Sucesso!</h2>
+                                        <p className="text-slate-500 font-medium">O seu contrato foi assinado digitalmente com sucesso.</p>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-4 pt-4">
+                                        <button onClick={gerarPDF} disabled={isPdfGenerating} className="flex items-center justify-center gap-3 w-full py-5 bg-red-600 text-white rounded-2xl font-black text-xl hover:bg-red-700 transition-all shadow-lg active:scale-95">
+                                            <i className="fas fa-download text-xl"></i>
+                                            {isPdfGenerating ? 'A GERAR PDF...' : 'DESCARREGAR CONTRATO (PDF)'}
+                                        </button>
+                                        <p className="text-xs text-slate-400 uppercase font-bold tracking-widest">Compatível com iOS, Android e Windows</p>
+                                    </div>
+                                    <div className="pt-8 border-t border-slate-100 space-y-4">
+                                        <p className="text-slate-600 font-bold uppercase text-sm tracking-widest">Dúvidas ou Comprovativos?</p>
+                                        <a href="https://wa.me/5547984474202" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-3 w-full py-4 bg-green-500 text-white rounded-2xl font-bold hover:bg-green-600 transition-all shadow-md active:scale-95">
+                                            <i className="fab fa-whatsapp text-2xl"></i> CONTATAR VIA WHATSAPP (47) 98447-4202
+                                        </a>
+                                    </div>
+                                </div>
+
+                                {/* Kit de Bordo Inteligente (IA) */}
+                                <div className="md:col-span-2 space-y-6 h-full">
+                                    <div className="bg-black border border-red-900 rounded-3xl p-6 shadow-2xl h-full flex flex-col">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="text-white font-black uppercase text-sm tracking-widest flex items-center gap-2">
+                                                <i className="fas fa-robot text-red-600"></i>
+                                                Kit de Bordo IA ✨
+                                            </h3>
+                                        </div>
+
+                                        {/* Tabs de Navegação IA */}
+                                        <div className="flex gap-2 border-b border-red-900/50 pb-3 mb-4 overflow-x-auto" style={{scrollbarWidth: 'none'}}>
+                                            <button onClick={() => setActiveAiTab('dicas')} className={`px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${activeAiTab === 'dicas' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'bg-red-950/30 text-slate-400 hover:text-white hover:bg-red-900/50'}`}>
+                                                <i className="fas fa-suitcase"></i> Dicas
+                                            </button>
+                                            <button onClick={() => setActiveAiTab('playlist')} className={`px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${activeAiTab === 'playlist' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'bg-red-950/30 text-slate-400 hover:text-white hover:bg-red-900/50'}`}>
+                                                <i className="fas fa-music"></i> Playlist
+                                            </button>
+                                            <button onClick={() => setActiveAiTab('legenda')} className={`px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${activeAiTab === 'legenda' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'bg-red-950/30 text-slate-400 hover:text-white hover:bg-red-900/50'}`}>
+                                                <i className="fas fa-camera"></i> Legenda
+                                            </button>
+                                            <button onClick={() => setActiveAiTab('look')} className={`px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${activeAiTab === 'look' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'bg-red-950/30 text-slate-400 hover:text-white hover:bg-red-900/50'}`}>
+                                                <i className="fas fa-tshirt"></i> Look
+                                            </button>
+                                            <button onClick={() => setActiveAiTab('whats')} className={`px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${activeAiTab === 'whats' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'bg-red-950/30 text-slate-400 hover:text-white hover:bg-red-900/50'}`}>
+                                                <i className="fab fa-whatsapp"></i> Grupo
+                                            </button>
+                                            <button onClick={() => setActiveAiTab('lanches')} className={`px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${activeAiTab === 'lanches' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'bg-red-950/30 text-slate-400 hover:text-white hover:bg-red-900/50'}`}>
+                                                <i className="fas fa-hamburger"></i> Lanches
+                                            </button>
+                                            <button onClick={() => setActiveAiTab('curiosidades')} className={`px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${activeAiTab === 'curiosidades' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'bg-red-950/30 text-slate-400 hover:text-white hover:bg-red-900/50'}`}>
+                                                <i className="fas fa-lightbulb"></i> Curiosidades
+                                            </button>
+                                        </div>
+
+                                        {/* Conteúdo: Dicas */}
+                                        {activeAiTab === 'dicas' && (
+                                            !aiTips ? (
+                                                <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
+                                                    <div className="bg-red-950/30 p-4 rounded-full">
+                                                        <i className="fas fa-magic text-3xl text-red-600"></i>
+                                                    </div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">
+                                                        Quer saber o que não pode faltar na sua mochila para o {formData.evento}?
+                                                    </p>
+                                                    <button onClick={handleGenerateTips} disabled={isLoadingAi} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
+                                                        {isLoadingAi ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-suitcase"></i>}
+                                                        ✨ GERAR DICAS
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex-grow flex flex-col h-0">
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
+                                                        {aiTips}
+                                                    </div>
+                                                    <button onClick={() => setAiTips("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
+                                                        <i className="fas fa-redo"></i> Gerar Novamente
+                                                    </button>
+                                                </div>
+                                            )
+                                        )}
+
+                                        {/* Conteúdo: Playlist */}
+                                        {activeAiTab === 'playlist' && (
+                                            !aiPlaylist ? (
+                                                <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
+                                                    <div className="bg-red-950/30 p-4 rounded-full">
+                                                        <i className="fas fa-headphones text-3xl text-red-600"></i>
+                                                    </div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">
+                                                        Criar uma playlist de "Esquenta" com a vibe ideal para a viagem até ao {formData.evento}?
+                                                    </p>
+                                                    <button onClick={handleGeneratePlaylist} disabled={isLoadingPlaylist} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
+                                                        {isLoadingPlaylist ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-music"></i>}
+                                                        ✨ CRIAR PLAYLIST
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex-grow flex flex-col h-0">
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
+                                                        {aiPlaylist}
+                                                    </div>
+                                                    <button onClick={() => setAiPlaylist("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
+                                                        <i className="fas fa-redo"></i> Gerar Novamente
+                                                    </button>
+                                                </div>
+                                            )
+                                        )}
+
+                                        {/* Conteúdo: Legendas */}
+                                        {activeAiTab === 'legenda' && (
+                                            !aiCaption ? (
+                                                <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
+                                                    <div className="bg-red-950/30 p-4 rounded-full">
+                                                        <i className="fas fa-camera-retro text-3xl text-red-600"></i>
+                                                    </div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">
+                                                        Vai postar que garantiu a vaga? Deixe a IA criar as melhores legendas para o seu Insta!
+                                                    </p>
+                                                    <button onClick={handleGenerateCaption} disabled={isLoadingCaption} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
+                                                        {isLoadingCaption ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-hashtag"></i>}
+                                                        ✨ CRIAR LEGENDAS
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex-grow flex flex-col h-0">
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
+                                                        {aiCaption}
+                                                    </div>
+                                                    <button onClick={() => setAiCaption("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
+                                                        <i className="fas fa-redo"></i> Gerar Novamente
+                                                    </button>
+                                                </div>
+                                            )
+                                        )}
+
+                                        {/* Conteúdo: Look */}
+                                        {activeAiTab === 'look' && (
+                                            !aiOutfit ? (
+                                                <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
+                                                    <div className="bg-red-950/30 p-4 rounded-full">
+                                                        <i className="fas fa-tshirt text-3xl text-red-600"></i>
+                                                    </div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">
+                                                        Sem ideias do que vestir? A IA sugere os melhores looks para curtir o evento com todo o conforto e estilo!
+                                                    </p>
+                                                    <button onClick={handleGenerateOutfit} disabled={isLoadingOutfit} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
+                                                        {isLoadingOutfit ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-tshirt"></i>}
+                                                        ✨ SUGERIR LOOKS
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex-grow flex flex-col h-0">
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
+                                                        {aiOutfit}
+                                                    </div>
+                                                    <button onClick={() => setAiOutfit("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
+                                                        <i className="fas fa-redo"></i> Gerar Novamente
+                                                    </button>
+                                                </div>
+                                            )
+                                        )}
+
+                                        {/* Conteúdo: WhatsApp */}
+                                        {activeAiTab === 'whats' && (
+                                            !aiWhats ? (
+                                                <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
+                                                    <div className="bg-red-950/30 p-4 rounded-full">
+                                                        <i className="fab fa-whatsapp text-3xl text-red-600"></i>
+                                                    </div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">
+                                                        Entrou no grupo da excursão agora? Gere uma mensagem simpática e animada para quebrar o gelo com a malta!
+                                                    </p>
+                                                    <button onClick={handleGenerateWhats} disabled={isLoadingWhats} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
+                                                        {isLoadingWhats ? <i className="fas fa-spinner fa-spin"></i> : <i className="fab fa-whatsapp"></i>}
+                                                        ✨ MENSAGEM DO GRUPO
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex-grow flex flex-col h-0">
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
+                                                        {aiWhats}
+                                                    </div>
+                                                    <button onClick={() => setAiWhats("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
+                                                        <i className="fas fa-redo"></i> Gerar Novamente
+                                                    </button>
+                                                </div>
+                                            )
+                                        )}
+
+                                        {/* Conteúdo: Lanches */}
+                                        {activeAiTab === 'lanches' && (
+                                            !aiSnacks ? (
+                                                <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
+                                                    <div className="bg-red-950/30 p-4 rounded-full">
+                                                        <i className="fas fa-hamburger text-3xl text-red-600"></i>
+                                                    </div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">
+                                                        Não sabe o que levar para comer na viagem? A IA sugere opções práticas que não fazem sujidade!
+                                                    </p>
+                                                    <button onClick={handleGenerateSnacks} disabled={isLoadingSnacks} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
+                                                        {isLoadingSnacks ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-hamburger"></i>}
+                                                        ✨ SUGERIR LANCHES
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex-grow flex flex-col h-0">
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
+                                                        {aiSnacks}
+                                                    </div>
+                                                    <button onClick={() => setAiSnacks("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
+                                                        <i className="fas fa-redo"></i> Gerar Novamente
+                                                    </button>
+                                                </div>
+                                            )
+                                        )}
+
+                                        {/* Conteúdo: Curiosidades */}
+                                        {activeAiTab === 'curiosidades' && (
+                                            !aiTrivia ? (
+                                                <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4 py-4">
+                                                    <div className="bg-red-950/30 p-4 rounded-full">
+                                                        <i className="fas fa-lightbulb text-3xl text-red-600"></i>
+                                                    </div>
+                                                    <p className="text-xs text-slate-400 font-medium px-4">
+                                                        Entre no clima da viagem! Descubra curiosidades incríveis sobre o evento {formData.evento}.
+                                                    </p>
+                                                    <button onClick={handleGenerateTrivia} disabled={isLoadingTrivia} className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all active:scale-95 disabled:opacity-50">
+                                                        {isLoadingTrivia ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-lightbulb"></i>}
+                                                        ✨ VER CURIOSIDADES
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex-grow flex flex-col h-0">
+                                                    <div className="flex-grow overflow-y-auto pr-2 text-xs p-4 bg-white/5 rounded-xl border border-white/10 text-slate-200 leading-relaxed whitespace-pre-wrap mb-3">
+                                                        {aiTrivia}
+                                                    </div>
+                                                    <button onClick={() => setAiTrivia("")} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-400 flex items-center justify-center gap-1 w-full py-2 bg-red-950/30 rounded-lg">
+                                                        <i className="fas fa-redo"></i> Gerar Novamente
+                                                    </button>
+                                                </div>
+                                            )
+                                        )}
+                                        
+                                        <div className="mt-4 pt-4 border-t border-red-900/50">
+                                            <p className="text-[9px] text-slate-500 uppercase font-bold text-center">IA alimentada por Google Gemini</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Modal de IA (Resumo do Contrato) */}
+                    {showAiModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                            <div className="bg-white text-black rounded-3xl max-w-xl w-full p-8 shadow-2xl border-t-8 border-red-600 relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-4">
+                                    <button onClick={() => setShowAiModal(false)} className="text-slate-400 hover:text-black transition-colors">
+                                        <i className="fas fa-times text-xl"></i>
+                                    </button>
+                                </div>
+                                
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="bg-red-600 p-2 rounded-lg text-white">
+                                        <i className="fas fa-magic text-xl"></i>
+                                    </div>
+                                    <h3 className="text-xl font-black uppercase tracking-tight">O Contrato em Miúdos ✨</h3>
+                                </div>
+
+                                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 text-sm leading-relaxed text-slate-700 whitespace-pre-wrap max-h-[60vh] overflow-y-auto">
+                                    {aiSummary}
+                                </div>
+
+                                <div className="mt-8">
+                                    <button 
+                                        onClick={() => setShowAiModal(false)}
+                                        className="w-full py-4 bg-black text-white rounded-xl font-bold text-lg hover:bg-slate-800 transition-all active:scale-95"
+                                    >
+                                        ENTENDI, VOU ASSINAR!
+                                    </button>
+                                </div>
+                                <p className="mt-4 text-[9px] text-slate-400 uppercase font-bold text-center">Este resumo é gerado por IA para fins informativos. Prevalece o texto integral do contrato.</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Toast para Mensagens de Erro/Alerta do Usuário */}
+                    {toastMessage && (
+                        <div className="fixed bottom-6 right-6 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold flex items-center gap-3">
+                            <i className="fas fa-exclamation-circle text-xl"></i>
+                            {toastMessage}
+                        </div>
+                    )}
+
+                    {/* PDF Template (Hidden) */}
+                    <div style={{ display: 'none' }}>
+                        <div id="documento-template" className="bg-white p-12 font-sans text-black" style={{ width: '800px' }}>
+                            <div className="border-4 border-black p-4 mb-8 bg-slate-50 text-[8pt] text-black font-mono leading-tight">
+                                <div id="metadata-topo-pdf" className="space-y-1">
+                                    {/* Preenchido via JS */}
+                                </div>
+                                <div className="mt-2 pt-2 border-t border-slate-300 flex justify-between">
+                                    <span>AUTENTICAÇÃO ÚNICA: {authCode}</span>
+                                    <span>SISTEMA FOLLOW TRIP - VERIFICAÇÃO LGPD</span>
+                                </div>
+                            </div>
+
+                            <div className="text-center mb-10 border-b-4 border-red-600 pb-4">
+                                <h1 className="text-2xl font-black uppercase text-black">Contrato de Prestação de Serviços</h1>
+                                <p className="font-bold text-red-600 italic">Follow Trip - Excursões para Eventos Musicais</p>
+                            </div>
+
+                            <div className="text-justify whitespace-pre-wrap leading-relaxed text-[10pt] text-black mb-10">
+                                {contrato}
+                            </div>
+
+                            <div className="mt-16 pt-8 border-t-2 border-slate-200 evitar-quebra" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                                <div className="flex flex-col items-center justify-center">
+                                    <img id="assinatura-final-img" alt="Assinatura" className="h-24 object-contain mb-2" />
+                                    <div className="w-80 border-t-2 border-black mb-1"></div>
+                                    <p className="font-black text-lg">{formData.nome.toUpperCase()}</p>
+                                    <p className="text-xs text-slate-500 uppercase font-bold tracking-widest">Assinatura Eletrônica Verificada</p>
+                                    <p id="data-documento" className="text-[9px] text-slate-500 mt-1">Data da assinatura: --/--/----</p>
+                                    <p className="text-[10px] text-slate-400 mt-2 italic">Declaração de Ciência e Aceite da Lei LGPD n° 13.709/2018</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
